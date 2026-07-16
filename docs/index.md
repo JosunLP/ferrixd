@@ -82,6 +82,8 @@ features:
 
 <IrcTerminal />
 
+<FxStats />
+
 <div class="fx-home-outro">
 
 ## Thirty-five years old, and still the right shape

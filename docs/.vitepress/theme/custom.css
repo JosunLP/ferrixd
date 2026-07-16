@@ -38,6 +38,13 @@
   --vp-custom-block-tip-bg: rgba(212, 88, 30, 0.08);
 }
 
+:root {
+  /* light mode: paper with a faint warm cast instead of pure white */
+  --vp-c-bg: #fdfbf9;
+  --vp-c-bg-alt: #f7f3ef;
+  --vp-c-bg-soft: #f7f3ef;
+}
+
 .dark {
   /* iron-grey with a warm cast, instead of VitePress's blue-black */
   --vp-c-bg: #1b1815;
@@ -134,4 +141,105 @@ h1, h2, h3, h4 {
 
 .VPBadge.tip {
   border: 1px solid rgba(212, 88, 30, 0.4);
+}
+
+/* ---- global identity details ------------------------------------------- */
+
+::selection {
+  background: rgba(212, 88, 30, 0.28);
+}
+
+html {
+  scrollbar-color: rgba(212, 88, 30, 0.45) transparent;
+}
+
+/* sidebar section titles read like config-file sections */
+.VPSidebar .VPSidebarItem.level-0 > .item > .text {
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+}
+
+/* active sidebar link gets an oxide tick mark */
+.VPSidebarItem.level-1 .item,
+.VPSidebarItem.level-2 .item {
+  border-left: 2px solid transparent;
+  padding-left: 14px;
+  margin-left: -16px;
+  transition: border-color 0.25s;
+}
+
+.VPSidebarItem.level-1 .item:has(.link.active),
+.VPSidebarItem.level-2 .item:has(.link.active) {
+  border-left-color: var(--vp-c-brand-1);
+}
+
+/* prev/next footer cards */
+.vp-doc + .prev-next .pager-link,
+.prev-next .pager-link {
+  transition: border-color 0.25s;
+}
+
+.prev-next .pager-link:hover {
+  border-color: rgba(212, 88, 30, 0.5);
+}
+
+.prev-next .pager-link .title {
+  font-family: var(--vp-font-family-mono);
+  font-size: 14px;
+}
+
+/* kbd — for keyboard/IRC-command callouts in prose */
+.vp-doc kbd {
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.85em;
+  padding: 2px 6px;
+  border: 1px solid var(--vp-c-divider);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--vp-c-bg-soft);
+}
+
+/* code-group tabs: active tab in oxide */
+.vp-code-group .tabs label {
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
+}
+
+/* copy-code feedback in brand color */
+.vp-doc [class*='language-'] > button.copy.copied,
+.vp-doc [class*='language-'] > button.copy:hover.copied {
+  border-color: rgba(212, 88, 30, 0.5);
+}
+
+/* outline ("On this page") marker */
+.VPDocAsideOutline .outline-marker {
+  background: var(--vp-c-brand-1);
+}
+
+/* footer: mono, quiet */
+.VPFooter .message,
+.VPFooter .copyright {
+  font-family: var(--vp-font-family-mono);
+  font-size: 12.5px;
+}
+
+/* external links get a subtle ember underline on hover */
+.vp-doc a {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: color 0.2s;
+}
+
+/* reduced motion: no card lift, no blinking cursor */
+@media (prefers-reduced-motion: reduce) {
+  .VPFeature:hover {
+    transform: none;
+  }
+  .fx-cursor {
+    animation: none !important;
+  }
 }

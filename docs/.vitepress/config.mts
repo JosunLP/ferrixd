@@ -8,9 +8,19 @@ export default defineConfig({
   base: '/ferrixd/',
   lastUpdated: true,
   cleanUrls: true,
+  titleTemplate: ':title · ferrixd',
+
+  sitemap: {
+    hostname: 'https://josunlp.github.io/ferrixd/',
+  },
 
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/ferrixd/logo.svg' }],
+    ['link', { rel: 'preconnect', href: 'https://fonts.googleapis.com' }],
+    [
+      'link',
+      { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+    ],
     ['meta', { name: 'theme-color', content: '#d4581e' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'ferrixd — Ferrous IRC Daemon' }],
@@ -114,6 +124,19 @@ export default defineConfig({
 
     search: {
       provider: 'local',
+      options: {
+        detailedView: true,
+      },
+    },
+
+    docFooter: {
+      prev: '« previous',
+      next: 'next »',
+    },
+
+    lastUpdated: {
+      text: 'Last updated',
+      formatOptions: { dateStyle: 'medium' },
     },
 
     editLink: {
