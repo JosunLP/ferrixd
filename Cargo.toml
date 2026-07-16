@@ -79,7 +79,7 @@ toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 rpassword = "7"
-getrandom = "0.2"
+getrandom = "0.4"
 
 # --- observability ---
 tracing = "0.1"
