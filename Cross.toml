@@ -1,0 +1,12 @@
+# `cross` build configuration (used by the release workflow's cross-compiled
+# targets). Only the Android target overrides anything; every other target
+# keeps the default image pinned to the installed `cross` version.
+#
+# Why the override: the default aarch64-linux-android image ships an old NDK
+# whose layout makes recent rustc fail at link time with
+# `ld: cannot find -lunwind` — rustc >= 1.68 links libunwind explicitly, but the
+# old NDK does not put it on the linker search path. The image built from
+# cross's `main` branch carries a modern NDK (r25, clang) that provides
+# libunwind, so the Android binary links cleanly.
+[target.aarch64-linux-android]
+image = "ghcr.io/cross-rs/aarch64-linux-android:main"
