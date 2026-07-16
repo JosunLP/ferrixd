@@ -52,10 +52,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux: static musl binaries — run on any distro, no libc dependency
-          # (same recipe as the Dockerfile).
+          # Linux: fully static musl binaries — no glibc dependency, so a single
+          # artifact per arch runs on every distro and every libc/kernel vintage
+          # (Alpine … RHEL, old and new). Coverage is one build per CPU arch; the
+          # arch set is capped by `ring` (the TLS crypto backend), which supports
+          # x86_64/x86/aarch64/arm only — hence no s390x/ppc64le/riscv64 here.
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, cross: true }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, cross: true }
+          - { target: i686-unknown-linux-musl, os: ubuntu-latest, cross: true }
+          - { target: armv7-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
+          - { target: arm-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
           # FreeBSD and Android (Termux) are cross-compiled via the `cross`
           # container images, which carry the matching C toolchains for the
           # bundled C in the tree (ring's shims, rusqlite's sqlite3.c).
@@ -138,6 +144,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The glob also matches i686-unknown-linux-musl; the assemble step below
+      # extracts only the amd64/arm64 binaries the image actually ships.
       - name: Download musl binaries
         uses: actions/download-artifact@v8
         with:

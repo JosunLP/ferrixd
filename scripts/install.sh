@@ -6,8 +6,9 @@
 #   update:    curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- update
 #   uninstall: curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- uninstall
 #
-# Supported platforms: Linux x86_64/aarch64 (static musl), macOS (Apple
-# Silicon + Intel), FreeBSD x86_64, Android aarch64 (Termux). Windows users:
+# Supported platforms: Linux x86_64/aarch64/i686/armv7/armv6 (fully static
+# musl — runs on any distro and any libc/kernel vintage), macOS (Apple Silicon
+# + Intel), FreeBSD x86_64, Android aarch64 (Termux). Windows users:
 # scripts/install.ps1. Every download is verified against the release's
 # SHA-256 checksum before anything is written to the install directory.
 #
@@ -89,6 +90,10 @@ detect_target() {
     case "$arch" in
         x86_64 | amd64) arch=x86_64 ;;
         aarch64 | arm64) arch=aarch64 ;;
+        i386 | i486 | i586 | i686 | x86) arch=i686 ;;
+        # armv8l = 32-bit userland on ARMv8; runs the armv7 binary.
+        armv7l | armv7 | armv8l) arch=armv7 ;;
+        armv6l | armv6) arch=armv6 ;;
     esac
     # Termux reports "Linux" from `uname -s`; `-o` distinguishes Android.
     # (macOS/BSD uname may lack -o entirely, hence the stderr discard.)
@@ -98,6 +103,9 @@ detect_target() {
     case "$os/$arch" in
         Linux/x86_64) TARGET=x86_64-unknown-linux-musl ;;
         Linux/aarch64) TARGET=aarch64-unknown-linux-musl ;;
+        Linux/i686) TARGET=i686-unknown-linux-musl ;;
+        Linux/armv7) TARGET=armv7-unknown-linux-musleabihf ;;
+        Linux/armv6) TARGET=arm-unknown-linux-musleabihf ;;
         Android/aarch64) TARGET=aarch64-linux-android ;;
         Darwin/x86_64) TARGET=x86_64-apple-darwin ;;
         Darwin/aarch64) TARGET=aarch64-apple-darwin ;;
