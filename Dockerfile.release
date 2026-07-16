@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# Release image — assembled from the pre-built static musl binaries that the
+# release workflow already cross-compiles for each architecture. `TARGETARCH`
+# is injected by buildx (amd64 | arm64) and selects the matching binary, so the
+# multi-arch build performs NO compilation (no QEMU-emulated cargo build) and
+# ships the exact same binary as the `ferrixd-*-unknown-linux-musl` tarballs.
+#
+# The build context is a throwaway directory prepared by the workflow that
+# contains `ferrixd-amd64` and `ferrixd-arm64` — NOT the repository root. The
+# from-source counterpart used for local `docker build` lives in ./Dockerfile.
+# ---------------------------------------------------------------------------
+FROM alpine:3.22
+
+ARG TARGETARCH
+
+RUN addgroup -g 10001 -S ferrixd \
+    && adduser -u 10001 -S -G ferrixd -H -h /var/lib/ferrixd ferrixd \
+    && mkdir -p /etc/ferrixd /var/lib/ferrixd \
+    && chown ferrixd:ferrixd /etc/ferrixd /var/lib/ferrixd
+
+# The binary is a fully static musl build, so alpine (vs. scratch) only adds
+# busybox for debugging and container healthchecks.
+COPY ferrixd-${TARGETARCH} /usr/local/bin/ferrixd
+RUN chmod +x /usr/local/bin/ferrixd
+
+# 6697 TLS (primary) · 6667 optional plaintext · 6666 optional S2S links ·
+# 9090 optional Prometheus metrics. Which are live is decided by ferrixd.toml.
+EXPOSE 6697 6667 6666 9090
+
+USER ferrixd
+# The default config path is ./ferrixd.toml, so the workdir doubles as the
+# config home: mount a config at /etc/ferrixd/ferrixd.toml and every subcommand
+# (run, check, gen-config, …) finds it without -c.
+WORKDIR /etc/ferrixd
+
+# `docker stop` sends SIGTERM, which ferrixd handles as a graceful shutdown.
+ENTRYPOINT ["/usr/local/bin/ferrixd"]
