@@ -1,0 +1,119 @@
+name: 🐛 Bug report
+description: Something the server does wrong — a crash, a protocol violation, or behaviour that contradicts the docs.
+title: "bug: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a precise report. A bug that reproduces gets
+        fixed; one that can't be reproduced usually can't.
+
+        **Not a bug report?** Usage questions go to
+        [Discussions](https://github.com/josunlp/ferrixd/discussions); security problems go
+        through [private reporting](https://github.com/josunlp/ferrixd/security/advisories/new),
+        **never** a public issue (see [SECURITY.md](https://github.com/josunlp/ferrixd/blob/main/SECURITY.md)).
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ferrixd --version`. If you built from source, include the commit SHA.
+      placeholder: "ferrixd 1.0.0 (or: main @ a148262)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - Prebuilt binary (GitHub release)
+        - Install script (install.sh / install.ps1)
+        - Built from source (cargo build / cargo run)
+        - Docker image / docker compose
+        - Distribution package
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topology
+    attributes:
+      label: Deployment
+      description: Does the bug involve a single server, or a federated link?
+      options:
+        - Single server
+        - Federated network (ferrix ↔ ferrix S2S link)
+        - Federated with a TS6 peer (charybdis / solanum / …)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS, architecture, and — if relevant — the IRC client and version you connected with.
+      placeholder: "Linux x86_64 (musl static build); WeeChat 4.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did the server actually do? Quote the exact numeric, error, or wire output where you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should it have done instead? If a spec or a doc page says so, link it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The more mechanical, the better — a raw protocol exchange, a short script, or a minimal
+        config beats a prose description. **Redact any secrets** (passwords, tokens, cert keys).
+      value: |
+        1.
+        2.
+        3.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: The minimal `ferrixd.toml` fragment needed to reproduce. Redact secrets.
+      render: toml
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Relevant output, ideally with `--log debug` (or `RUST_LOG=debug`). This is
+        automatically formatted as code, so no backticks are needed.
+      render: shell
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/josunlp/ferrixd/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: This is **not** a security vulnerability (those go through [private reporting](https://github.com/josunlp/ferrixd/security/advisories/new)).
+          required: true
+        - label: I have redacted all secrets (passwords, tokens, private keys) from the details above.
+          required: true

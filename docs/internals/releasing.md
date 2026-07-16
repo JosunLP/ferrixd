@@ -1,14 +1,18 @@
 # Releasing
 
-Cutting a release is a tag push. Everything else — building for seven targets,
-checksumming, and publishing — is done by
-[`release.yml`](https://github.com/josunlp/ferrixd/blob/main/.github/workflows/release.yml).
+Cutting a release is publishing a GitHub Release. Everything else — building for
+13 targets, checksumming, attaching the assets, and pushing a multi-arch
+container image to ghcr.io — is done by
+[`release.yml`](https://github.com/josunlp/ferrixd/blob/main/.github/workflows/release.yml),
+which is triggered by the `release: published` event (a bare tag push does
+nothing).
 
 ## The one rule
 
-**Bump the version before you tag.** The release workflow's first job refuses a
-tag whose name disagrees with `[workspace.package] version` in `Cargo.toml` —
-otherwise the published binaries would report a version they are not.
+**Bump the version before you release.** The release workflow's first job refuses
+a release whose tag name disagrees with `[workspace.package] version` in
+`Cargo.toml` — otherwise the published binaries would report a version they are
+not.
 
 ## Checklist
 
@@ -30,18 +34,21 @@ cargo deny check
 cargo build --release -p ferrixd && ./target/release/ferrixd --version
 docker build -t ferrixd:test . && docker run --rm ferrixd:test --version
 
-# 5. Commit, tag, push.
+# 5. Commit and push, then publish the GitHub Release — publishing is what
+#    triggers release.yml; a bare tag push no longer does.
 git commit -am "Release vX.Y.Z"
-git tag -a vX.Y.Z -m "ferrixd vX.Y.Z"
-git push origin main --follow-tags
+git push origin main
+gh release create vX.Y.Z --title "ferrixd vX.Y.Z" --generate-notes
+#   `gh release create` tags HEAD and publishes in one step — that publish is
+#   what starts release.yml. (You can also do it from the GitHub UI.)
 ```
 
 A `workflow_dispatch` run of the release workflow builds every target **without
-publishing** — use it to smoke-test a change to the build matrix before tagging.
+publishing** — use it to smoke-test a change to the build matrix before releasing.
 
 ## What the workflow produces
 
-For each of the seven targets, a version-less archive plus its checksum
+For each of the 13 targets, a version-less archive plus its checksum
 (`ferrixd-<target>.tar.gz` / `.zip`, and `.sha256`), attached to a GitHub
 release along with a `SHA256SUMS` file. The names carry no version so that
 `releases/latest/download/…` stays a stable URL — which is exactly what

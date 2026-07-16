@@ -1,0 +1,13 @@
+# Issue-template chooser configuration.
+# https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://josunlp.github.io/ferrixd/
+    about: Installation, configuration, federation, the CLI, and the plugin API — most "how do I…?" answers live here.
+  - name: 💬 Questions & discussion
+    url: https://github.com/josunlp/ferrixd/discussions
+    about: Usage questions, deployment help, and design ideas belong in Discussions, not the issue tracker.
+  - name: 🔐 Report a security vulnerability
+    url: https://github.com/josunlp/ferrixd/security/advisories/new
+    about: Do NOT open a public issue for a security problem. Use private vulnerability reporting — see SECURITY.md.

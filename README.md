@@ -219,17 +219,21 @@ worker-thread count (one async task per connection, not one OS thread) — see
 `echo-message` · `account-tag` · `account-notify` · `away-notify` ·
 `extended-join` · `chghost` · `setname` · `multi-prefix` ·
 `userhost-in-names` · `cap-notify` · `invite-notify` · `batch` ·
-`labeled-response` · `standard-replies` · `extended-monitor` · `sts` ·
+`labeled-response` · `standard-replies` · `extended-monitor` ·
 `draft/chathistory` · `draft/metadata-2` · `draft/multiline` ·
 `draft/account-registration` · `draft/read-marker` ·
 `draft/event-playback` · `draft/message-redaction` ·
 `draft/channel-rename`
 
+Plus `sts` (strict transport security): advertised per connection when a policy
+is configured, but never `REQ`able — so it is not counted among the 26.
+
 ## Installing
 
-Every release ships prebuilt binaries for **Linux** (x86_64/aarch64, fully
-static musl), **macOS** (Apple Silicon + Intel), **Windows** (x64),
-**FreeBSD** (x86_64), and **Android/Termux** (aarch64), built by
+Every release ships prebuilt binaries for **Linux**
+(x86_64/aarch64/i686/armv7/armv6, fully static musl), **macOS** (Apple Silicon +
+Intel), **Windows** (x64/ARM64/x86), **FreeBSD** (x86_64/i686), and
+**Android/Termux** (aarch64), built by
 [`release.yml`](.github/workflows/release.yml). The installer verifies every
 download against the release's SHA-256 checksum.
 
@@ -260,11 +264,12 @@ irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 |
 Defaults: binaries land in `/usr/local/bin` (as root) or `~/.local/bin`
 (as user) — `$PREFIX/bin` on Termux, `%LOCALAPPDATA%\Programs\ferrixd` on
 Windows (added to the user `PATH`). Pin a version with
-`sh -s -- install --version v0.1.0` (PowerShell: `... install v0.1.0`);
+`sh -s -- install --version v1.0.0` (PowerShell: `... install v1.0.0`);
 override the directory with `--dir`/`-Dir` or `$FERRIXD_INSTALL_DIR`.
 
-Cutting a release: bump `version` in `Cargo.toml`, tag the commit `vX.Y.Z`,
-push the tag — the workflow refuses tags that disagree with the crate version.
+Cutting a release: bump `version` in `Cargo.toml`, then publish a GitHub Release
+tagged `vX.Y.Z` (e.g. `gh release create vX.Y.Z`) — the workflow refuses a
+release whose tag disagrees with the crate version.
 
 *Docs: [Installation](https://josunlp.github.io/ferrixd/guide/installation)*
 

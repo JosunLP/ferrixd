@@ -17,7 +17,7 @@ These are enforced by CI, not by taste:
   in-memory sockets — a unit test on a helper is not enough to prove a client
   sees the right thing.
 - **The parser is fuzzed.** A change to `crates/ferrix-protocol` must survive
-  `cargo +nightly fuzz run parse` locally.
+  `cargo +nightly fuzz run parse_message` locally.
 
 ## Getting set up
 

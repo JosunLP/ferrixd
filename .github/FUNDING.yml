@@ -1,0 +1,10 @@
+# Adds a "Sponsor" button to the repository.
+# Uncomment and fill in the platforms that actually apply — a linked platform
+# that isn't set up just shows a dead button, so leave the rest commented.
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: [josunlp]
+# ko_fi: # Ko-fi username
+# open_collective: # Open Collective slug
+# liberapay: # Liberapay username
+# custom: # ["https://example.com/donate"]

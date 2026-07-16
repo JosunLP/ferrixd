@@ -1,0 +1,41 @@
+# Code owners for ferrixd
+
+# These owners are requested for review automatically when a matching path
+
+# changes. The last matching pattern takes precedence
+
+# <https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners>
+
+# Default owner for everything in the repo
+
+*                               @josunlp
+
+# The zero-copy parser is fuzzed and audited in isolation — protocol changes
+
+# here ripple across the whole daemon
+
+/crates/ferrix-protocol/        @josunlp
+
+# Security-sensitive surfaces: auth, crypto, cloaking, the plugin sandbox
+
+# and the federation trust boundary
+
+/crates/ferrixd/src/tls.rs      @josunlp
+/crates/ferrixd/src/account.rs  @josunlp
+/crates/ferrixd/src/sasl.rs     @josunlp
+/crates/ferrixd/src/scram.rs    @josunlp
+/crates/ferrixd/src/cloak.rs    @josunlp
+/crates/ferrixd/src/plugin.rs   @josunlp
+/crates/ferrixd/src/s2s.rs      @josunlp
+/crates/ferrixd/src/link.rs     @josunlp
+/crates/ferrixd/src/ts6.rs      @josunlp
+
+# CI, release automation, and repository meta
+
+/.github/                       @josunlp
+/deny.toml                      @josunlp
+/Cross.toml                     @josunlp
+
+# Security policy and supply-chain configuration
+
+/SECURITY.md                    @josunlp

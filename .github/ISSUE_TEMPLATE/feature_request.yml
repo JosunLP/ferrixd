@@ -1,0 +1,79 @@
+name: ✨ Feature request
+description: Propose a new capability, command, or configuration knob.
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ferrixd aims to be a *correct* IRCv3 server, not an opinionated one. Proposals that map
+        onto an existing spec are the easiest to accept; net-new behaviour needs a clear reason it
+        belongs in the daemon rather than a plugin.
+
+        Have a rough idea rather than a concrete proposal? Open a
+        [Discussion](https://github.com/josunlp/ferrixd/discussions) first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What can't you do today, or what is harder than it should be? Describe the need, not just the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should ferrixd do? Sketch the command, capability, config key, numeric, or behaviour.
+    validations:
+      required: true
+
+  - type: input
+    id: spec
+    attributes:
+      label: Relevant specification
+      description: If this tracks an IRCv3 spec, an RFC, or another IRCd's behaviour, link it.
+      placeholder: "https://ircv3.net/specs/extensions/..."
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface does this touch?
+      multiple: true
+      options:
+        - Client-facing protocol (command / numeric / capability)
+        - Server-to-server (S2S) protocol / federation
+        - Configuration schema (ferrixd.toml)
+        - CLI (subcommand / flag)
+        - WASM plugin ABI
+        - Persistence / history
+        - Observability (metrics / tracing)
+        - Documentation only
+    validations:
+      required: true
+
+  - type: textarea
+    id: compat
+    attributes:
+      label: Compatibility considerations
+      description: |
+        Does a client-visible change need an S2S frame too, or it stops at the server boundary?
+        Does it affect the advertised capability set, `ISUPPORT`, or the config schema in a way that
+        must stay compatible across 1.x? (See the stability promise in the README/CHANGELOG.)
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why this one — including whether it could live in a plugin instead.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/josunlp/ferrixd/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: This proposal is consistent with the project being a spec-faithful IRCv3 server.
+          required: true

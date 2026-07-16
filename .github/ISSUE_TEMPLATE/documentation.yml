@@ -1,0 +1,41 @@
+name: 📚 Documentation issue
+description: Something in the docs is wrong, missing, outdated, or confusing.
+title: "docs: "
+labels: ["documentation", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The docs live in [`docs/`](https://github.com/josunlp/ferrixd/tree/main/docs) (VitePress,
+        published to <https://josunlp.github.io/ferrixd/>). Small fixes are very welcome as a direct
+        pull request — no need to file this first.
+
+  - type: input
+    id: location
+    attributes:
+      label: Page or file
+      description: The docs URL, or the path under `docs/` (or the README section).
+      placeholder: "https://josunlp.github.io/ferrixd/guide/federation  ·  docs/reference/cli.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What's the problem?
+      options:
+        - Incorrect — contradicts how the software actually behaves
+        - Outdated — described behaviour has since changed
+        - Missing — something undocumented
+        - Unclear — technically correct but hard to follow
+        - Broken link / rendering / example
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What's wrong, and — if you know it — what it should say instead.
+    validations:
+      required: true

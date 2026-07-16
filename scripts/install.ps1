@@ -19,7 +19,7 @@ release's SHA-256 checksum before installation.
 install (default), update, or uninstall.
 
 .PARAMETER Version
-A release tag like v0.1.0; default 'latest'.
+A release tag like v1.0.0; default 'latest'.
 
 .PARAMETER Dir
 Install directory; default %LOCALAPPDATA%\Programs\ferrixd.

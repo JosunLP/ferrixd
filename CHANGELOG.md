@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-07-14
+## [1.0.0] — 2026-07-16
 
 The first stable release. ferrixd is a from-scratch, memory-safe, IRCv3
 IRC server: TLS-first, federated over mutual TLS, with persistent message
@@ -37,9 +37,10 @@ daemon is the product, the crates are its implementation.
   (ELIST filters), `KNOCK`, `MAP`, `HELP`, `STATS`, `LINKS`.
 - 26 negotiable IRCv3 capabilities, including `sasl`, `message-tags`,
   `server-time`, `echo-message`, `labeled-response`, `batch`,
-  `extended-monitor`, `sts`, `draft/chathistory`, `draft/multiline`,
+  `extended-monitor`, `draft/chathistory`, `draft/multiline`,
   `draft/metadata-2`, `draft/read-marker`, `draft/event-playback`,
-  `draft/message-redaction`, `draft/channel-rename`.
+  `draft/message-redaction`, `draft/channel-rename` — plus `sts`, advertised
+  per connection but not itself negotiable.
 - SASL `PLAIN`, `EXTERNAL`, and `SCRAM-SHA-256` over Argon2id-hashed accounts,
   verified in constant time; account self-registration (`REGISTER`).
 

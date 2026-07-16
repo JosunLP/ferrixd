@@ -2,15 +2,21 @@
 
 Every release ships prebuilt, checksum-verified binaries for:
 
-| Platform            | Target                       | Notes                             |
-| ------------------- | ---------------------------- | --------------------------------- |
-| Linux x86_64        | `x86_64-unknown-linux-musl`  | fully static — runs on any distro |
-| Linux aarch64       | `aarch64-unknown-linux-musl` | fully static                      |
-| macOS Apple Silicon | `aarch64-apple-darwin`       |                                   |
-| macOS Intel         | `x86_64-apple-darwin`        |                                   |
-| Windows x64         | `x86_64-pc-windows-msvc`     |                                   |
-| FreeBSD x86_64      | `x86_64-unknown-freebsd`     |                                   |
-| Android (Termux)    | `aarch64-linux-android`      | installs to `$PREFIX/bin`         |
+| Platform                 | Target                           | Notes                             |
+| ------------------------ | -------------------------------- | --------------------------------- |
+| Linux x86_64             | `x86_64-unknown-linux-musl`      | fully static — runs on any distro |
+| Linux aarch64            | `aarch64-unknown-linux-musl`     | fully static                      |
+| Linux i686               | `i686-unknown-linux-musl`        | fully static                      |
+| Linux armv7 (hard-float) | `armv7-unknown-linux-musleabihf` | fully static                      |
+| Linux armv6 (hard-float) | `arm-unknown-linux-musleabihf`   | fully static                      |
+| macOS Apple Silicon      | `aarch64-apple-darwin`           |                                   |
+| macOS Intel              | `x86_64-apple-darwin`            |                                   |
+| Windows x64              | `x86_64-pc-windows-msvc`         |                                   |
+| Windows ARM64            | `aarch64-pc-windows-msvc`        |                                   |
+| Windows x86              | `i686-pc-windows-msvc`           |                                   |
+| FreeBSD x86_64           | `x86_64-unknown-freebsd`         |                                   |
+| FreeBSD i686             | `i686-unknown-freebsd`           |                                   |
+| Android (Termux)         | `aarch64-linux-android`          | installs to `$PREFIX/bin`         |
 
 Asset names are version-less (`ferrixd-<target>.tar.gz` / `.zip`), so
 `releases/latest/download/…` URLs are stable. Every download is verified
@@ -79,11 +85,11 @@ stay where they are.
 ## Pinning a version
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- install --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- install --version v1.0.0
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) install v0.1.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) install v1.0.0
 ```
 
 Other installer flags: `--dry-run` prints what would happen without touching

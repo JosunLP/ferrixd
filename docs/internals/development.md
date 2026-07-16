@@ -102,12 +102,14 @@ npm run build    # what CI/Pages runs; also checks internal links
 
 1. Bump `version` in the workspace `Cargo.toml`
    (`[workspace.package]`).
-2. Commit, tag `vX.Y.Z` (must equal the crate version — the workflow
-   refuses mismatches), push the tag.
-3. `release.yml` builds all seven targets (musl statics via `cross`,
-   native macOS/Windows), generates SHA-256 checksums, and publishes the
-   GitHub release. A `workflow_dispatch` run is a dry run: builds
-   everything, publishes nothing.
+2. Commit and push, then publish a GitHub Release tagged `vX.Y.Z`
+   (`gh release create vX.Y.Z --generate-notes`, or the GitHub UI). The tag
+   must equal the crate version — the workflow refuses mismatches. Publishing
+   the Release is what triggers the build; a bare tag push does not.
+3. `release.yml` builds all 13 targets (musl statics + BSD/Android via `cross`,
+   native macOS/Windows), generates SHA-256 checksums, attaches them to the
+   release, and pushes a multi-arch container image to ghcr.io. A
+   `workflow_dispatch` run is a dry run: builds everything, publishes nothing.
 
 ## Conventions
 

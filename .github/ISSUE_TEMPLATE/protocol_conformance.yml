@@ -1,0 +1,85 @@
+name: 📡 Protocol / conformance issue
+description: ferrixd's wire behaviour disagrees with an IRCv3 spec, an RFC, or a real client's expectations.
+title: "conformance: "
+labels: ["conformance", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the server *runs fine* but sends or accepts something the protocol says it
+        shouldn't — a wrong numeric, a missing tag, a capability that misbehaves under negotiation,
+        or an interop problem with a specific client or a linked IRCd.
+
+  - type: input
+    id: subject
+    attributes:
+      label: Capability / command / numeric
+      description: The exact protocol element involved.
+      placeholder: "draft/chathistory · CAP LS 302 · numeric 005 (ISUPPORT) · WHOX %n"
+    validations:
+      required: true
+
+  - type: input
+    id: spec
+    attributes:
+      label: Specification reference
+      description: The clause you're measuring against — an IRCv3 spec section, an RFC number, or the modern IRC docs.
+      placeholder: "https://ircv3.net/specs/extensions/chathistory"
+    validations:
+      required: true
+
+  - type: input
+    id: peer
+    attributes:
+      label: Client or peer
+      description: The client (name + version) or linked IRCd (and its protocol — native ferrix or TS6) that surfaced this.
+      placeholder: "The Lounge 4.4 · solanum 1.0 over TS6"
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the spec requires
+      description: Quote or paraphrase the relevant requirement, and what ferrixd should have emitted/accepted.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What ferrixd actually did
+    validations:
+      required: true
+
+  - type: textarea
+    id: trace
+    attributes:
+      label: Raw protocol trace
+      description: |
+        The actual bytes on the wire, both directions, are worth more than any description here.
+        Prefix client→server lines with `C:` and server→client with `S:`. Redact secrets.
+      placeholder: |
+        C: CAP REQ :draft/chathistory
+        S: CAP * ACK :draft/chathistory
+        C: CHATHISTORY LATEST #chan * 50
+        S: :server FAIL CHATHISTORY ...
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ferrixd --version` (or commit SHA).
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/josunlp/ferrixd/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I've linked the specific spec clause this measures against, not just the spec's homepage.
+          required: true
