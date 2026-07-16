@@ -92,18 +92,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
-name = "autocfg"
-version = "1.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -279,12 +267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "downcast-rs"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -365,6 +347,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -427,6 +415,15 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "foldhash",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
@@ -464,12 +461,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
 ]
-
-[[package]]
-name = "indexmap-nostd"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -554,12 +545,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multi-stash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -573,26 +558,6 @@ name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
-
-[[package]]
-name = "num-derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "num-traits"
-version = "0.2.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
-dependencies = [
- "autocfg",
-]
 
 [[package]]
 name = "once_cell"
@@ -639,12 +604,6 @@ dependencies = [
  "rand_core",
  "subtle",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pbkdf2"
@@ -948,12 +907,11 @@ checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "string-interner"
-version = "0.17.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c6a0d765f5807e98a091107bae0a56ea3799f66a5de47b2c84c94a39c09974e"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
 dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.5",
  "serde",
 ]
 
@@ -1241,47 +1199,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59972d6cd272259de647b7c1f1912e45e289c75ffd4be04e10695507cd7e1b59"
 dependencies = [
  "leb128fmt",
- "wasmparser",
+ "wasmparser 0.253.0",
 ]
 
 [[package]]
 name = "wasmi"
-version = "0.36.5"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ddc18185880ff32de907a809864283d18f9de568c23d46464b6231973d595"
+checksum = "2300d0f78cba12f14e29e8dd157ea64050c0a688179aefdb2050105805594a0c"
 dependencies = [
- "arrayvec",
- "multi-stash",
- "num-derive",
- "num-traits",
- "smallvec",
  "spin",
  "wasmi_collections",
  "wasmi_core",
- "wasmparser-nostd",
+ "wasmi_ir",
+ "wasmparser 0.239.0",
+ "wat",
 ]
 
 [[package]]
 name = "wasmi_collections"
-version = "0.36.5"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eddc10bfb0069e913399ebd66c5a72c7d9aceabddcaa0296f062a55ab61d404"
+checksum = "f8a8c42a2a76148d43097b1d7cc2a5bf33d5c23bd4dd69015fc887e311767884"
 dependencies = [
- "ahash",
- "hashbrown 0.14.5",
  "string-interner",
 ]
 
 [[package]]
 name = "wasmi_core"
-version = "0.36.5"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f08b12621457c17cfd5349cce25029eeac3769b63b1b02bd850d595a00f375ff"
+checksum = "9013136083d988725953390bf668b64b7a218fabf26f8b913bbc59546b97ee27"
 dependencies = [
- "downcast-rs",
  "libm",
- "num-traits",
- "paste",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba1fa003f79156f406d62ef0e1464dc03e11ace37170e9fa7524299a75ad8f68"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.239.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c9d90bb93e764f6beabf1d02028c70a2156a6583e63ac4218dd07ef733368b0"
+dependencies = [
+ "bitflags",
+ "indexmap",
 ]
 
 [[package]]
@@ -1293,15 +1262,6 @@ dependencies = [
  "bitflags",
  "indexmap",
  "semver",
-]
-
-[[package]]
-name = "wasmparser-nostd"
-version = "0.100.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5a015fe95f3504a94bb1462c717aae75253e39b9dd6c3fb1062c934535c64aa"
-dependencies = [
- "indexmap-nostd",
 ]
 
 [[package]]
