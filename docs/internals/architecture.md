@@ -55,16 +55,16 @@ crate**, where it can be fuzzed and audited in isolation:
 
 Module map (all under `crates/ferrixd/src/`):
 
-| Area | Modules |
-| --- | --- |
-| Boot & I/O | `cli`, `config`, `tls`, `codec`, `listener`, `connection` |
-| Core model | `state` (registries), `session` (per-connection), `command` (dispatch + handlers), `casemap`, `wire`, `numeric` |
-| IRCv3 | `cap`, `deliver` (per-recipient tagging), `batch`/multiline handling |
-| Identity | `account` (Argon2), `sasl`, `scram`, `cloak`, `mask` (glob matching) |
-| Durability | `history`, `persist` (SQLite write-behind), `chanreg` |
-| Federation | `s2s` (protocol), `link` (transport) |
-| Extensibility | `plugin` (WASM host) |
-| Ops | `metrics` |
+| Area          | Modules                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| Boot & I/O    | `cli`, `config`, `tls`, `codec`, `listener`, `connection`                                                       |
+| Core model    | `state` (registries), `session` (per-connection), `command` (dispatch + handlers), `casemap`, `wire`, `numeric` |
+| IRCv3         | `cap`, `deliver` (per-recipient tagging), `batch`/multiline handling                                            |
+| Identity      | `account` (Argon2), `sasl`, `scram`, `cloak`, `mask` (glob matching)                                            |
+| Durability    | `history`, `persist` (SQLite write-behind), `chanreg`                                                           |
+| Federation    | `s2s` (protocol), `link` (transport)                                                                            |
+| Extensibility | `plugin` (WASM host)                                                                                            |
+| Ops           | `metrics`                                                                                                       |
 
 ## Concurrency model
 
@@ -145,7 +145,7 @@ socket bytes ─► codec (length budgets) ─► ferrix-protocol parse (zero-co
   hope. Measured: **~13.8 KB per connection** at 100k concurrent
   connections (~1.38 GB RSS) on an 8-core host, scaling linearly. The
   generator and methodology are in
-  [`loadtest/`](https://github.com/j-pfalzgraf/ferrixd/tree/main/loadtest).
+  [`loadtest/`](https://github.com/josunlp/ferrixd/tree/main/loadtest).
 
 ## Where federation slots in
 

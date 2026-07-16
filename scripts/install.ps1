@@ -2,14 +2,14 @@
 <#
 .SYNOPSIS
 ferrixd installer for Windows — install, update, or uninstall the prebuilt
-ferrixd binary from GitHub releases (https://github.com/j-pfalzgraf/ferrixd).
+ferrixd binary from GitHub releases (https://github.com/josunlp/ferrixd).
 
 .DESCRIPTION
 One-liners (PowerShell):
 
-  install:   irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1 | iex
-  update:    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) update
-  uninstall: & ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) uninstall
+  install:   irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 | iex
+  update:    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) update
+  uninstall: & ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) uninstall
 
 Installs to %LOCALAPPDATA%\Programs\ferrixd (no admin rights needed) and adds
 that directory to the user PATH. The download is verified against the
@@ -37,7 +37,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Repo = 'j-pfalzgraf/ferrixd'
+$Repo = 'josunlp/ferrixd'
 $Asset = 'ferrixd-x86_64-pc-windows-msvc.zip'
 $Exe = Join-Path $Dir 'ferrixd.exe'
 

@@ -8,13 +8,13 @@ next.
 
 Covered by semantic versioning; these will not change incompatibly within 1.x:
 
-| Surface | Promise |
-| --- | --- |
-| Configuration schema | new keys may appear with defaults; existing keys keep their meaning |
-| Client protocol | commands, numerics, and the advertised capability set |
-| CLI | subcommands and flags |
-| Plugin ABI | hook signatures and the memory contract ([reference](/reference/plugin-abi)) |
-| S2S wire protocol | frames extend only backwards-compatibly; older forms stay parseable, so mixed-version 1.x networks interoperate |
+| Surface              | Promise                                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Configuration schema | new keys may appear with defaults; existing keys keep their meaning                                             |
+| Client protocol      | commands, numerics, and the advertised capability set                                                           |
+| CLI                  | subcommands and flags                                                                                           |
+| Plugin ABI           | hook signatures and the memory contract ([reference](/reference/plugin-abi))                                    |
+| S2S wire protocol    | frames extend only backwards-compatibly; older forms stay parseable, so mixed-version 1.x networks interoperate |
 
 Two deliberate exceptions:
 
@@ -57,4 +57,4 @@ Direction, not commitment:
   candidates.
 
 If you want to influence any of this, open an issue —
-[GitHub](https://github.com/j-pfalzgraf/ferrixd/issues).
+[GitHub](https://github.com/josunlp/ferrixd/issues).

@@ -71,4 +71,4 @@ daemon is the product, the crates are its implementation.
 - Bounded SendQ, token-bucket rate limits, per-IP connection throttling, ping
   timeouts, K/D/G-lines, and HMAC host cloaking.
 
-[1.0.0]: https://github.com/j-pfalzgraf/ferrixd/releases/tag/v1.0.0
+[1.0.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.0.0

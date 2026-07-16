@@ -8,7 +8,7 @@ The workspace pins its Rust version in `rust-toolchain.toml`; with
 `rustup`, the right compiler is selected automatically:
 
 ```sh
-git clone https://github.com/j-pfalzgraf/ferrixd
+git clone https://github.com/josunlp/ferrixd
 cd ferrixd
 cargo build            # debug
 cargo build --release  # optimized (release profile strips symbols)
@@ -79,15 +79,15 @@ connection), scaling linearly with connection count.
 
 ## Repository layout for contributors
 
-| Path | What lives there |
-| --- | --- |
-| `crates/ferrix-protocol/` | wire model, parser, encoder — dependency-light, fuzz-facing |
-| `crates/ferrixd/src/` | the daemon (module map in [Architecture](/internals/architecture)) |
-| `fuzz/` | cargo-fuzz targets |
-| `loadtest/` | density load generator (own crate, excluded) |
-| `scripts/` | installer scripts (POSIX sh — must stay dash/BusyBox/Termux-compatible — and PowerShell) |
-| `docs/` | this documentation (VitePress) |
-| `.github/workflows/` | `ci.yml` (gates above) and `release.yml` (7-target build matrix) |
+| Path                      | What lives there                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `crates/ferrix-protocol/` | wire model, parser, encoder — dependency-light, fuzz-facing                              |
+| `crates/ferrixd/src/`     | the daemon (module map in [Architecture](/internals/architecture))                       |
+| `fuzz/`                   | cargo-fuzz targets                                                                       |
+| `loadtest/`               | density load generator (own crate, excluded)                                             |
+| `scripts/`                | installer scripts (POSIX sh — must stay dash/BusyBox/Termux-compatible — and PowerShell) |
+| `docs/`                   | this documentation (VitePress)                                                           |
+| `.github/workflows/`      | `ci.yml` (gates above) and `release.yml` (7-target build matrix)                         |
 
 ## Working on the docs
 

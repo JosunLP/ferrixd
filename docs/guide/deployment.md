@@ -31,7 +31,7 @@ useradd --system --home /var/lib/ferrixd --shell /usr/sbin/nologin ferrixd
 mkdir -p /etc/ferrixd /var/lib/ferrixd
 chown ferrixd:ferrixd /var/lib/ferrixd
 
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
 # → /usr/local/bin/ferrixd (running as root)
 ```
 
@@ -133,7 +133,7 @@ With persistence enabled, a restart costs a reconnect, not history.
 The repository's `docker-compose.yml` is production-usable as-is:
 
 ```sh
-git clone https://github.com/j-pfalzgraf/ferrixd && cd ferrixd
+git clone https://github.com/josunlp/ferrixd && cd ferrixd
 docker build -t ferrixd .
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/etc/ferrixd ferrixd gen-config
 $EDITOR ferrixd.toml           # set [persistence] path = "/var/lib/ferrixd/ferrixd.db"
@@ -155,12 +155,12 @@ docker run --rm -it ferrixd hash-password
 
 ## Firewalling
 
-| Port | Who needs it |
-| --- | --- |
-| `6697/tcp` | the world (or your users) |
-| `6667/tcp` | **nobody** — keep plaintext off or loopback-only |
-| `6666/tcp` (`link_bind`) | linked peers only — allowlist their addresses |
-| `9090/tcp` (metrics) | Prometheus only — bind loopback/private, never public |
+| Port                     | Who needs it                                          |
+| ------------------------ | ----------------------------------------------------- |
+| `6697/tcp`               | the world (or your users)                             |
+| `6667/tcp`               | **nobody** — keep plaintext off or loopback-only      |
+| `6666/tcp` (`link_bind`) | linked peers only — allowlist their addresses         |
+| `9090/tcp` (metrics)     | Prometheus only — bind loopback/private, never public |
 
 ## Backup
 
@@ -177,7 +177,7 @@ stop, put both back, start.
 ## Upgrades
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- update
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- update
 systemctl restart ferrixd
 ```
 

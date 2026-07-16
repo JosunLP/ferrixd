@@ -2,15 +2,15 @@
 
 Every release ships prebuilt, checksum-verified binaries for:
 
-| Platform | Target | Notes |
-| --- | --- | --- |
-| Linux x86_64 | `x86_64-unknown-linux-musl` | fully static — runs on any distro |
-| Linux aarch64 | `aarch64-unknown-linux-musl` | fully static |
-| macOS Apple Silicon | `aarch64-apple-darwin` | |
-| macOS Intel | `x86_64-apple-darwin` | |
-| Windows x64 | `x86_64-pc-windows-msvc` | |
-| FreeBSD x86_64 | `x86_64-unknown-freebsd` | |
-| Android (Termux) | `aarch64-linux-android` | installs to `$PREFIX/bin` |
+| Platform            | Target                       | Notes                             |
+| ------------------- | ---------------------------- | --------------------------------- |
+| Linux x86_64        | `x86_64-unknown-linux-musl`  | fully static — runs on any distro |
+| Linux aarch64       | `aarch64-unknown-linux-musl` | fully static                      |
+| macOS Apple Silicon | `aarch64-apple-darwin`       |                                   |
+| macOS Intel         | `x86_64-apple-darwin`        |                                   |
+| Windows x64         | `x86_64-pc-windows-msvc`     |                                   |
+| FreeBSD x86_64      | `x86_64-unknown-freebsd`     |                                   |
+| Android (Termux)    | `aarch64-linux-android`      | installs to `$PREFIX/bin`         |
 
 Asset names are version-less (`ferrixd-<target>.tar.gz` / `.zip`), so
 `releases/latest/download/…` URLs are stable. Every download is verified
@@ -21,23 +21,23 @@ against its published SHA-256 checksum by the installer.
 **Linux · macOS · FreeBSD · Android (Termux):**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 | iex
 ```
 
 Where the binary lands:
 
-| Context | Directory |
-| --- | --- |
-| Unix, run as root | `/usr/local/bin` |
-| Unix, run as user | `~/.local/bin` |
-| Termux | `$PREFIX/bin` |
-| Windows | `%LOCALAPPDATA%\Programs\ferrixd` (added to the user `PATH`) |
+| Context           | Directory                                                    |
+| ----------------- | ------------------------------------------------------------ |
+| Unix, run as root | `/usr/local/bin`                                             |
+| Unix, run as user | `~/.local/bin`                                               |
+| Termux            | `$PREFIX/bin`                                                |
+| Windows           | `%LOCALAPPDATA%\Programs\ferrixd` (added to the user `PATH`) |
 
 Override the directory with `--dir <PATH>` (PowerShell: `-Dir`) or the
 `FERRIXD_INSTALL_DIR` environment variable.
@@ -51,11 +51,11 @@ existing binary and reports `old → new`.
 ## Update
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- update
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- update
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) update
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) update
 ```
 
 `update` locates the installed binary (on `PATH` first, then the default
@@ -66,11 +66,11 @@ version.
 ## Uninstall
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- uninstall
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) uninstall
 ```
 
 Uninstall removes only the binary. Your configuration and SQLite database
@@ -79,11 +79,11 @@ stay where they are.
 ## Pinning a version
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- install --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- install --version v0.1.0
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) install v0.1.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) install v0.1.0
 ```
 
 Other installer flags: `--dry-run` prints what would happen without touching
@@ -140,7 +140,7 @@ You need a Rust toolchain (the workspace pins its version via
 `rust-toolchain.toml`; `rustup` picks it up automatically):
 
 ```sh
-git clone https://github.com/j-pfalzgraf/ferrixd
+git clone https://github.com/josunlp/ferrixd
 cd ferrixd
 cargo build --release -p ferrixd
 # → target/release/ferrixd
@@ -167,7 +167,7 @@ Each release asset has a companion `.sha256` file plus a combined
 `SHA256SUMS`:
 
 ```sh
-curl -fsSLO https://github.com/j-pfalzgraf/ferrixd/releases/latest/download/ferrixd-x86_64-unknown-linux-musl.tar.gz
-curl -fsSLO https://github.com/j-pfalzgraf/ferrixd/releases/latest/download/ferrixd-x86_64-unknown-linux-musl.tar.gz.sha256
+curl -fsSLO https://github.com/josunlp/ferrixd/releases/latest/download/ferrixd-x86_64-unknown-linux-musl.tar.gz
+curl -fsSLO https://github.com/josunlp/ferrixd/releases/latest/download/ferrixd-x86_64-unknown-linux-musl.tar.gz.sha256
 sha256sum -c ferrixd-x86_64-unknown-linux-musl.tar.gz.sha256
 ```

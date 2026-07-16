@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-| Version | Supported |
-| ------- | --------- |
-| 1.x     | ✅ security fixes |
+| Version | Supported                  |
+| ------- | -------------------------- |
+| 1.x     | ✅ security fixes           |
 | < 1.0   | ❌ pre-release, unsupported |
 
 ## Reporting a vulnerability
@@ -12,7 +12,7 @@
 **Please do not open a public issue for a security problem.**
 
 Report it privately through GitHub's
-[private vulnerability reporting](https://github.com/j-pfalzgraf/ferrixd/security/advisories/new)
+[private vulnerability reporting](https://github.com/josunlp/ferrixd/security/advisories/new)
 (Security → Report a vulnerability). Include:
 
 - the affected version (`ferrixd --version`) and configuration (redact secrets);
@@ -51,7 +51,7 @@ The daemon as configured by a reasonable operator, in particular:
 
 ## Hardening
 
-The [Security Model](https://j-pfalzgraf.github.io/ferrixd/internals/security)
+The [Security Model](https://josunlp.github.io/ferrixd/internals/security)
 documents the trust boundaries, the crypto choices, and the DoS controls, and
-[Limits](https://j-pfalzgraf.github.io/ferrixd/reference/limits) lists every
+[Limits](https://josunlp.github.io/ferrixd/reference/limits) lists every
 bound the server enforces.

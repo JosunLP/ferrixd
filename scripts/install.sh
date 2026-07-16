@@ -1,10 +1,10 @@
 #!/bin/sh
 # ferrixd installer — one-line install / update / uninstall of the prebuilt
-# ferrixd binary from GitHub releases (https://github.com/j-pfalzgraf/ferrixd).
+# ferrixd binary from GitHub releases (https://github.com/josunlp/ferrixd).
 #
-#   install:   curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
-#   update:    curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- update
-#   uninstall: curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- uninstall
+#   install:   curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
+#   update:    curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- update
+#   uninstall: curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- uninstall
 #
 # Supported platforms: Linux x86_64/aarch64 (static musl), macOS (Apple
 # Silicon + Intel), FreeBSD x86_64, Android aarch64 (Termux). Windows users:
@@ -16,7 +16,7 @@
 
 set -u
 
-REPO="j-pfalzgraf/ferrixd"
+REPO="josunlp/ferrixd"
 BIN="ferrixd"
 
 say()  { printf '%s\n' "$*"; }

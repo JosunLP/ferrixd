@@ -2,7 +2,7 @@
 
 Cutting a release is a tag push. Everything else — building for seven targets,
 checksumming, and publishing — is done by
-[`release.yml`](https://github.com/j-pfalzgraf/ferrixd/blob/main/.github/workflows/release.yml).
+[`release.yml`](https://github.com/josunlp/ferrixd/blob/main/.github/workflows/release.yml).
 
 ## The one rule
 
@@ -45,7 +45,7 @@ For each of the seven targets, a version-less archive plus its checksum
 (`ferrixd-<target>.tar.gz` / `.zip`, and `.sha256`), attached to a GitHub
 release along with a `SHA256SUMS` file. The names carry no version so that
 `releases/latest/download/…` stays a stable URL — which is exactly what
-[`scripts/install.sh`](https://github.com/j-pfalzgraf/ferrixd/blob/main/scripts/install.sh)
+[`scripts/install.sh`](https://github.com/josunlp/ferrixd/blob/main/scripts/install.sh)
 downloads and verifies.
 
 ## Publishing to crates.io (optional)

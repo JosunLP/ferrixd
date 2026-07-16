@@ -94,7 +94,7 @@ spec-complete, hostile-input-proof, and honest about persistence.
 **ferrixd** is that server. Element 26, oxidised into software.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
 ferrixd gen-config && ferrixd check && ferrixd
 ```
 

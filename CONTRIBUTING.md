@@ -1,7 +1,7 @@
 # Contributing to ferrixd
 
 Thanks for wanting to help. This file is the short version; the
-[Development guide](https://j-pfalzgraf.github.io/ferrixd/internals/development)
+[Development guide](https://josunlp.github.io/ferrixd/internals/development)
 has the long one.
 
 ## Ground rules
@@ -41,7 +41,7 @@ ferrixd tries to be a *correct* IRCv3 server, not an opinionated one:
   or a capability value, wire it to the constant the handler actually uses;
 - a new client-visible state change almost always needs an S2S frame too, or it
   silently stops at the server boundary. See
-  [the S2S protocol reference](https://j-pfalzgraf.github.io/ferrixd/reference/s2s-protocol).
+  [the S2S protocol reference](https://josunlp.github.io/ferrixd/reference/s2s-protocol).
 
 Backwards compatibility on a link matters: extend a frame with optional trailing
 parameters and keep parsing the old form, so a 1.x network with mixed versions

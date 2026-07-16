@@ -11,18 +11,18 @@ A from-scratch, memory-safe, IRCv3-complete IRC server in Rust —<br>
 TLS-first, federated over mutual TLS, and load-tested to
 100,000 concurrent connections on a single node.
 
-[![CI](https://github.com/j-pfalzgraf/ferrixd/actions/workflows/ci.yml/badge.svg)](https://github.com/j-pfalzgraf/ferrixd/actions/workflows/ci.yml)
+[![CI](https://github.com/josunlp/ferrixd/actions/workflows/ci.yml/badge.svg)](https://github.com/josunlp/ferrixd/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-stable-d4581e?logo=rust&logoColor=white)
 ![unsafe_code](https://img.shields.io/badge/unsafe__code-forbid-1b1815)
 ![IRCv3](https://img.shields.io/badge/IRCv3-26_capabilities-d4581e)
 ![License](https://img.shields.io/badge/license-MIT_%2F_Apache--2.0-1b1815)
 
-**[📖 Documentation](https://j-pfalzgraf.github.io/ferrixd/)** ·
-[Quick Start](https://j-pfalzgraf.github.io/ferrixd/guide/quick-start) ·
-[Installation](https://j-pfalzgraf.github.io/ferrixd/guide/installation) ·
-[Configuration](https://j-pfalzgraf.github.io/ferrixd/guide/configuration) ·
-[Federation](https://j-pfalzgraf.github.io/ferrixd/guide/federation) ·
-[CLI](https://j-pfalzgraf.github.io/ferrixd/reference/cli)
+**[📖 Documentation](https://josunlp.github.io/ferrixd/)** ·
+[Quick Start](https://josunlp.github.io/ferrixd/guide/quick-start) ·
+[Installation](https://josunlp.github.io/ferrixd/guide/installation) ·
+[Configuration](https://josunlp.github.io/ferrixd/guide/configuration) ·
+[Federation](https://josunlp.github.io/ferrixd/guide/federation) ·
+[CLI](https://josunlp.github.io/ferrixd/reference/cli)
 
 </div>
 
@@ -36,7 +36,7 @@ is that server: element 26, oxidised into software.
 IRCv3 server with persistent message history, a federated server-to-server mesh,
 a sandboxed WASM plugin host, and a demonstrated density of ~100k concurrent
 connections per node. The
-[documentation](https://j-pfalzgraf.github.io/ferrixd/) (source in
+[documentation](https://josunlp.github.io/ferrixd/) (source in
 [`docs/`](docs/), deployed via GitHub Pages) covers installation, the full
 configuration and command reference, operators, federation, and the plugin API
 in depth — this README is the short tour.
@@ -111,7 +111,7 @@ and realname) and **WHOX** field selectors; `WHO`/`WHOIS` resolve users
 anywhere on the network. **`MONITOR`** provides presence notifications for up
 to 100 targets. Channel modes `+o/+v/+i/+m/+n/+s/+t/+k/+l` plus `+b/+e/+I` lists.
 
-*Docs: [Channels](https://j-pfalzgraf.github.io/ferrixd/guide/channels)*
+*Docs: [Channels](https://josunlp.github.io/ferrixd/guide/channels)*
 
 ### Accounts & authentication
 
@@ -120,7 +120,7 @@ keys); passwords are Argon2id-hashed and verified in constant time. Users can
 self-register with `REGISTER` (`draft/account-registration`); registered
 accounts are persisted in SQLite and survive restarts and `REHASH`.
 
-*Docs: [Accounts & SASL](https://j-pfalzgraf.github.io/ferrixd/guide/accounts)*
+*Docs: [Accounts & SASL](https://josunlp.github.io/ferrixd/guide/accounts)*
 
 ### Moderation & operators
 
@@ -132,7 +132,7 @@ bans (`KLINE`/`GLINE` at registration, `DLINE` by IP at connect). `REHASH`
 reloads accounts, operators, bans, and the MOTD from disk without dropping
 connections.
 
-*Docs: [Operators & Moderation](https://j-pfalzgraf.github.io/ferrixd/guide/operators)*
+*Docs: [Operators & Moderation](https://josunlp.github.io/ferrixd/guide/operators)*
 
 ### History & modern UX
 
@@ -148,7 +148,7 @@ connections.
   topic and modes are persisted and restored on restart, and the founder is
   auto-opped on join.
 
-*Docs: [Message History](https://j-pfalzgraf.github.io/ferrixd/guide/history)*
+*Docs: [Message History](https://josunlp.github.io/ferrixd/guide/history)*
 
 ### Federation (S2S)
 
@@ -177,7 +177,7 @@ modes, and ban lists. After that, everything propagates live:
   locally, and a genuine simultaneous collision is resolved deterministically
   (the smaller network UID wins — no synchronized clocks required).
 
-*Docs: [Federation (S2S)](https://j-pfalzgraf.github.io/ferrixd/guide/federation)*
+*Docs: [Federation (S2S)](https://josunlp.github.io/ferrixd/guide/federation)*
 
 ### WASM plugin host
 
@@ -189,7 +189,7 @@ can veto joins. Each call runs under a bounded *fuel* budget, so a runaway
 plugin traps instead of wedging the server (blocked calls fail open). Plugins
 have no ambient authority — only the host functions we grant.
 
-*Docs: [WASM Plugins](https://j-pfalzgraf.github.io/ferrixd/guide/plugins)*
+*Docs: [WASM Plugins](https://josunlp.github.io/ferrixd/guide/plugins)*
 
 ### Hardening
 
@@ -211,7 +211,7 @@ worker-thread count (one async task per connection, not one OS thread) — see
 [`loadtest/`](loadtest/) for the generator and methodology. A Prometheus
 `/metrics` endpoint and per-connection tracing spans cover operations.
 
-*Docs: [Observability](https://j-pfalzgraf.github.io/ferrixd/guide/observability)*
+*Docs: [Observability](https://josunlp.github.io/ferrixd/guide/observability)*
 
 ## IRCv3 capabilities
 
@@ -237,24 +237,24 @@ Linux · macOS · FreeBSD · Android (Termux):
 
 ```sh
 # install — re-run any time; also serves as "switch to latest"
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
 
 # update (updates in place, prints old -> new version)
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- update
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- update
 
 # uninstall (config + database stay)
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh -s -- uninstall
 ```
 
 Windows (PowerShell):
 
 ```powershell
 # install
-irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 | iex
 
 # update / uninstall
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) update
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.ps1))) uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) update
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1))) uninstall
 ```
 
 Defaults: binaries land in `/usr/local/bin` (as root) or `~/.local/bin`
@@ -266,7 +266,7 @@ override the directory with `--dir`/`-Dir` or `$FERRIXD_INSTALL_DIR`.
 Cutting a release: bump `version` in `Cargo.toml`, tag the commit `vX.Y.Z`,
 push the tag — the workflow refuses tags that disagree with the crate version.
 
-*Docs: [Installation](https://j-pfalzgraf.github.io/ferrixd/guide/installation)*
+*Docs: [Installation](https://josunlp.github.io/ferrixd/guide/installation)*
 
 ## Running it (development)
 
@@ -292,9 +292,9 @@ ferrixd                       # runs with ./ferrixd.toml (or -c <path>)
 ```
 
 See [`ferrixd.example.toml`](ferrixd.example.toml) for every knob, or the
-guides on [configuration](https://j-pfalzgraf.github.io/ferrixd/guide/configuration),
-[TLS certificates](https://j-pfalzgraf.github.io/ferrixd/guide/tls), and
-[production deployment](https://j-pfalzgraf.github.io/ferrixd/guide/deployment).
+guides on [configuration](https://josunlp.github.io/ferrixd/guide/configuration),
+[TLS certificates](https://josunlp.github.io/ferrixd/guide/tls), and
+[production deployment](https://josunlp.github.io/ferrixd/guide/deployment).
 
 ## Running it (Docker)
 
@@ -348,7 +348,7 @@ Global flags (valid before any subcommand): `-c/--config <PATH>`,
 `--log <FILTER>` (overrides `RUST_LOG`), `--log-format full|compact|pretty`, and
 `--color auto|always|never`.
 
-*Docs: [CLI Reference](https://j-pfalzgraf.github.io/ferrixd/reference/cli)*
+*Docs: [CLI Reference](https://josunlp.github.io/ferrixd/reference/cli)*
 
 ## Workspace layout
 
@@ -391,7 +391,7 @@ specifications and may change with them. The Rust library APIs are *not*
 covered: the daemon is the product.
 
 See the [CHANGELOG](CHANGELOG.md) for what shipped, and
-[the roadmap](https://j-pfalzgraf.github.io/ferrixd/internals/roadmap) for what
+[the roadmap](https://josunlp.github.io/ferrixd/internals/roadmap) for what
 may come next.
 
 ## License
@@ -412,6 +412,6 @@ issues go through [SECURITY.md](SECURITY.md), not the public issue tracker.
 
 <div align="center">
 <sub><b>ferrixd</b> — the Ferrous IRC Daemon ·
-<a href="https://j-pfalzgraf.github.io/ferrixd/">documentation</a> ·
-<a href="https://github.com/j-pfalzgraf/ferrixd/issues">issues</a></sub>
+<a href="https://josunlp.github.io/ferrixd/">documentation</a> ·
+<a href="https://github.com/josunlp/ferrixd/issues">issues</a></sub>
 </div>

@@ -27,13 +27,13 @@ defenses layer by layer.
 
 ## Credential handling
 
-| Secret | Storage | Verification |
-| --- | --- | --- |
-| Account passwords | Argon2id PHC hashes | constant-time |
-| Operator passwords | Argon2id PHC hashes | constant-time |
-| SCRAM credentials | derived keys only (salt, 4096 iterations, stored key, server key) | challenge–response; plaintext never stored |
-| Link passwords | config | constant-time comparison |
-| Client certificates | SHA-256 fingerprint allow-lists | exact match |
+| Secret              | Storage                                                           | Verification                               |
+| ------------------- | ----------------------------------------------------------------- | ------------------------------------------ |
+| Account passwords   | Argon2id PHC hashes                                               | constant-time                              |
+| Operator passwords  | Argon2id PHC hashes                                               | constant-time                              |
+| SCRAM credentials   | derived keys only (salt, 4096 iterations, stored key, server key) | challenge–response; plaintext never stored |
+| Link passwords      | config                                                            | constant-time comparison                   |
+| Client certificates | SHA-256 fingerprint allow-lists                                   | exact match                                |
 
 Passwords never appear in logs. `ferrixd hash-password` exists so
 plaintext never needs to touch a production config.
@@ -43,19 +43,19 @@ plaintext never needs to touch a production config.
 Every per-client resource is bounded, and every bound has a defined
 consequence and a metric:
 
-| Control | Bound | Consequence | Metric |
-| --- | --- | --- | --- |
-| Inbound rate | token bucket: `recv_burst` / `recv_rate` | disconnect `Excess Flood` | `ferrixd_flood_disconnects_total` |
-| Outbound queue | `sendq_lines` | disconnect `SendQ exceeded` | `ferrixd_sendq_drops_total` |
-| Registration | `registration_timeout_secs` | disconnect | `ferrixd_registration_timeouts_total` |
-| TLS handshake | `handshake_timeout_secs` | abort | — |
-| Idle | `ping_interval_secs` ×2 | disconnect `Ping timeout` | — |
-| Per-IP connections | `max_clients_per_ip` | refuse | — |
-| Channels per client | `max_channels` | `405` | — |
-| History memory | `history_len` × `history_max_targets` | LRU eviction | — |
-| Frame length | `max_line_bytes` | disconnect | — |
-| SASL buffer | 8 KiB | `ERR_SASLTOOLONG` | — |
-| Link mailbox | 4,096 frames | link dropped | — |
+| Control             | Bound                                    | Consequence                 | Metric                                |
+| ------------------- | ---------------------------------------- | --------------------------- | ------------------------------------- |
+| Inbound rate        | token bucket: `recv_burst` / `recv_rate` | disconnect `Excess Flood`   | `ferrixd_flood_disconnects_total`     |
+| Outbound queue      | `sendq_lines`                            | disconnect `SendQ exceeded` | `ferrixd_sendq_drops_total`           |
+| Registration        | `registration_timeout_secs`              | disconnect                  | `ferrixd_registration_timeouts_total` |
+| TLS handshake       | `handshake_timeout_secs`                 | abort                       | —                                     |
+| Idle                | `ping_interval_secs` ×2                  | disconnect `Ping timeout`   | —                                     |
+| Per-IP connections  | `max_clients_per_ip`                     | refuse                      | —                                     |
+| Channels per client | `max_channels`                           | `405`                       | —                                     |
+| History memory      | `history_len` × `history_max_targets`    | LRU eviction                | —                                     |
+| Frame length        | `max_line_bytes`                         | disconnect                  | —                                     |
+| SASL buffer         | 8 KiB                                    | `ERR_SASLTOOLONG`           | —                                     |
+| Link mailbox        | 4,096 frames                             | link dropped                | —                                     |
 
 Two structural properties matter as much as the numbers:
 
@@ -100,5 +100,5 @@ Plugins are **untrusted code by contract**
 ## Reporting
 
 If you believe you've found a security issue, please use
-[GitHub's private vulnerability reporting](https://github.com/j-pfalzgraf/ferrixd/security)
+[GitHub's private vulnerability reporting](https://github.com/josunlp/ferrixd/security)
 rather than a public issue.

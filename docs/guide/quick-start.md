@@ -8,13 +8,13 @@ No config file, no certificates, nothing to clean up afterwards.
 Either install a release build:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/j-pfalzgraf/ferrixd/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.sh | sh
 ```
 
 …or run straight from a source checkout:
 
 ```sh
-git clone https://github.com/j-pfalzgraf/ferrixd
+git clone https://github.com/josunlp/ferrixd
 cd ferrixd
 cargo run -p ferrixd -- run --dev   # add `--release` for realistic performance
 ```
