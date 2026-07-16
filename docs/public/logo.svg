@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="oxide" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e8763b"/>
+      <stop offset="55%" stop-color="#d4581e"/>
+      <stop offset="100%" stop-color="#9c3a10"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="45%" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <!-- periodic-table tile for Fe (iron) -->
+  <rect x="6" y="6" width="116" height="116" rx="18" fill="url(#oxide)"/>
+  <rect x="6" y="6" width="116" height="116" rx="18" fill="url(#sheen)"/>
+  <rect x="10.5" y="10.5" width="107" height="107" rx="14" fill="none"
+        stroke="#ffffff" stroke-opacity="0.35" stroke-width="2.5"/>
+  <!-- atomic number -->
+  <text x="22" y="38" font-family="ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
+        font-size="20" font-weight="600" fill="#ffe8d9">26</text>
+  <!-- element symbol -->
+  <text x="64" y="88" text-anchor="middle"
+        font-family="ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
+        font-size="56" font-weight="700" fill="#fff7f2">Fe</text>
+  <!-- element name -->
+  <text x="64" y="110" text-anchor="middle"
+        font-family="ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
+        font-size="13" font-weight="500" letter-spacing="2" fill="#ffe8d9">ferrixd</text>
+</svg>

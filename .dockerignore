@@ -1,0 +1,10 @@
+# Whitelist: everything is excluded unless listed below. This keeps the build
+# context tiny (no target/, no .git/, no fuzz corpora) and deliberately omits
+# rust-toolchain.toml so the builder image's preinstalled stable toolchain is
+# used instead of rustup re-downloading the channel (+ rustfmt/clippy
+# components) on every image build.
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!ferrixd.example.toml

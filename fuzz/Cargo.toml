@@ -1,0 +1,26 @@
+[package]
+name = "ferrix-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Detach from the main workspace: cargo-fuzz builds on nightly with libFuzzer
+# and its own profiles, which must not perturb the stable workspace.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ferrix-protocol = { path = "../crates/ferrix-protocol" }
+
+[[bin]]
+name = "parse_message"
+path = "fuzz_targets/parse_message.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

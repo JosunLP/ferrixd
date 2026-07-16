@@ -1,0 +1,15 @@
+[package]
+name = "ferrixd-loadtest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "loadtest"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
+
+[profile.release]
+opt-level = 3

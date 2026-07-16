@@ -1,0 +1,137 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+/**
+ * ferrixd docs — "oxide" theme.
+ *
+ * The identity: iron (Fe, element 26) slowly oxidising. Rust-orange accents
+ * on iron-grey, periodic-table tile as the mark, monospace everywhere the
+ * protocol shows through.
+ */
+
+:root {
+  /* oxide scale */
+  --fx-oxide-1: #e8763b;
+  --fx-oxide-2: #d4581e;
+  --fx-oxide-3: #b8430f;
+  --fx-oxide-4: #9c3a10;
+  --fx-ember: #f59e6c;
+
+  --vp-font-family-base: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --vp-c-brand-1: var(--fx-oxide-3);
+  --vp-c-brand-2: var(--fx-oxide-2);
+  --vp-c-brand-3: var(--fx-oxide-2);
+  --vp-c-brand-soft: rgba(212, 88, 30, 0.14);
+
+  --vp-button-brand-bg: var(--fx-oxide-2);
+  --vp-button-brand-hover-bg: var(--fx-oxide-1);
+  --vp-button-brand-active-bg: var(--fx-oxide-3);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(115deg, var(--fx-ember) 10%, var(--fx-oxide-2) 55%, var(--fx-oxide-4));
+  --vp-home-hero-image-background-image: radial-gradient(closest-side, rgba(212, 88, 30, 0.32), transparent);
+  --vp-home-hero-image-filter: blur(56px);
+
+  --vp-custom-block-tip-border: rgba(212, 88, 30, 0.35);
+  --vp-custom-block-tip-text: var(--vp-c-text-1);
+  --vp-custom-block-tip-bg: rgba(212, 88, 30, 0.08);
+}
+
+.dark {
+  /* iron-grey with a warm cast, instead of VitePress's blue-black */
+  --vp-c-bg: #1b1815;
+  --vp-c-bg-alt: #15120f;
+  --vp-c-bg-soft: #242019;
+  --vp-c-bg-elv: #242019;
+  --vp-c-divider: #35302a;
+  --vp-c-gutter: #15120f;
+
+  --vp-c-brand-1: var(--fx-ember);
+  --vp-c-brand-2: var(--fx-oxide-1);
+  --vp-c-brand-3: var(--fx-oxide-2);
+  --vp-c-brand-soft: rgba(232, 118, 59, 0.16);
+
+  --vp-code-block-bg: #14110e;
+}
+
+/* ---- typography ------------------------------------------------------- */
+
+.VPNavBarTitle .title {
+  font-family: var(--vp-font-family-mono);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.015em;
+}
+
+/* ---- home hero -------------------------------------------------------- */
+
+.VPHero .name {
+  font-family: var(--vp-font-family-mono);
+  font-weight: 700;
+}
+
+.VPHero .tagline {
+  max-width: 42em;
+}
+
+.VPHero .VPImage {
+  filter: drop-shadow(0 12px 40px rgba(212, 88, 30, 0.35));
+}
+
+/* faint "rust grain" behind the landing page */
+.Layout:has(.VPHome) {
+  background-image:
+    radial-gradient(1100px 500px at 85% -10%, rgba(212, 88, 30, 0.09), transparent 60%),
+    radial-gradient(800px 420px at -10% 25%, rgba(212, 88, 30, 0.05), transparent 60%);
+}
+
+/* feature cards: oxide top edge on hover */
+.VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  transition: border-color 0.25s, transform 0.25s;
+}
+
+.VPFeature:hover {
+  border-color: rgba(212, 88, 30, 0.5);
+  transform: translateY(-2px);
+}
+
+/* ---- content polish ---------------------------------------------------- */
+
+.vp-doc h2 {
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc h2 .header-anchor,
+.vp-doc h3 .header-anchor {
+  color: var(--fx-oxide-2);
+}
+
+.vp-doc table {
+  font-size: 0.9em;
+}
+
+.vp-doc th {
+  font-family: var(--vp-font-family-mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vp-doc :not(pre) > code {
+  border-radius: 4px;
+}
+
+/* inline "wire literal" — used for raw IRC lines in prose */
+.vp-doc code.wire {
+  color: var(--fx-ember);
+}
+
+/* ---- badges ------------------------------------------------------------ */
+
+.VPBadge.tip {
+  border: 1px solid rgba(212, 88, 30, 0.4);
+}

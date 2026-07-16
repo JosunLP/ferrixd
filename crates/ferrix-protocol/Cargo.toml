@@ -1,0 +1,22 @@
+[package]
+name = "ferrix-protocol"
+description = "Zero-copy IRC / IRCv3 message parsing and encoding for ferrixd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+smallvec.workspace = true
+memchr.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

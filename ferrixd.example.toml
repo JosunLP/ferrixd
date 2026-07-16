@@ -1,0 +1,164 @@
+# ferrixd example configuration.
+#
+# Copy to `ferrixd.toml` and adjust (or run `ferrixd gen-config` to write this
+# file for you). Validate any changes with `ferrixd check` before restarting.
+# The parser rejects unknown keys (fail-closed configuration), so a
+# typo is an error, not a silently-ignored setting.
+#
+# Helper subcommands for the values below:
+#   ferrixd gen-cert       -> a self-signed [tls] cert + key (dev)
+#   ferrixd hash-password  -> an Argon2id `password_hash` for accounts/operators
+#   ferrixd fingerprint    -> a cert fingerprint for [[links]] / SASL EXTERNAL
+
+[server]
+# Advertised server name (used in numerics / source prefixes).
+name = "irc.example.test"
+
+# Advertised network name (ISUPPORT NETWORK).
+network = "ferrixnet"
+
+# Network-wide case folding for nicks/channels: "ascii" (default) or "rfc1459".
+casemapping = "ascii"
+
+# HMAC key enabling host cloaking (omit to disable). Keep this secret — it makes
+# cloaks unforgeable. Authenticated users are cloaked as account.<network>.
+# cloak_key = "change-this-to-a-long-random-secret"
+
+# Server id (SID) and optional inbound S2S link listener.
+sid = "42F"
+# link_bind = "0.0.0.0:6666"
+
+# Message of the day, one entry per line (optional).
+motd = [
+    "Welcome to ferrixd.",
+    "Be excellent to each other.",
+]
+
+# TLS is the primary, mandatory transport.
+tls_bind = "0.0.0.0:6697"
+
+# Plaintext is disabled by default. Uncomment ONLY for local testing;
+# binding to a non-loopback address will be rejected unless you also set
+# `allow_plain_nonlocal = true` below.
+# plain_bind = "127.0.0.1:6667"
+# allow_plain_nonlocal = false
+
+# Optional connection password: clients must send `PASS <password>` before
+# completing registration (rejected with 464 otherwise).
+# password = "change-me"
+
+# Optional IRCv3 strict transport security (`sts`) policy. Plaintext clients
+# are told the TLS port to reconnect to; TLS clients are told to remember the
+# policy for `duration` seconds (0 clears it).
+# sts = { port = 6697, duration = 2592000, preload = false }
+
+[tls]
+# Option A — provide a real certificate chain and private key (PEM):
+# cert = "/etc/ferrixd/fullchain.pem"
+# key  = "/etc/ferrixd/privkey.pem"
+
+# Option B — generate an ephemeral self-signed certificate at startup.
+# Convenient for development; NEVER use in production. Ignored if cert/key
+# are set above.
+self_signed_dev = true
+dev_hostnames = ["localhost", "irc.example.test"]
+
+[limits]
+# Wire-length budgets. Kept separate for tags and body per IRCv3.
+max_tag_bytes = 8191
+max_body_bytes = 512
+
+# Fatal frame length before the connection is dropped (DoS guard).
+# Must be >= max_tag_bytes + max_body_bytes plus a little slack.
+max_line_bytes = 8704
+
+# Seconds a connection may stay unregistered before it is closed (slot guard).
+registration_timeout_secs = 30
+
+# Seconds allowed for the TLS handshake before the attempt is aborted.
+handshake_timeout_secs = 15
+
+# Retained messages per target for chathistory (0 keeps only the current run).
+history_len = 500
+
+# Cap on the number of distinct in-memory history targets (channels + DM pairs).
+# Bounds total history memory regardless of activity; least-recently-active
+# targets are evicted past this. Persisted rows (if enabled) are unaffected.
+history_max_targets = 50000
+
+# Idle seconds before the server PINGs a quiet client (disconnects on a 2nd miss).
+ping_interval_secs = 120
+
+# --- DoS controls ---
+# Maximum simultaneous connections from one source IP (connection throttling).
+max_clients_per_ip = 10
+# Maximum channels a single client may be in at once (advertised as CHANLIMIT).
+max_channels = 50
+# Outbound SendQ depth in lines; a client whose queue overflows is dropped.
+sendq_lines = 2048
+# Inbound command burst allowance, then sustained rate/sec (token bucket).
+# Exceeding this disconnects the client with "Excess Flood".
+recv_burst = 20
+recv_rate = 10
+
+# --- SASL seed accounts ---
+# Each account may authenticate via SASL PLAIN (password) and/or EXTERNAL
+# (TLS client-certificate fingerprint).
+#
+# [[accounts]]
+# name = "alice"
+# # Development convenience: plaintext, hashed with Argon2id at startup. This
+# # form also derives the account's SCRAM-SHA-256 credentials automatically.
+# password = "change-me"
+# # Preferred in production: a pre-computed Argon2 PHC hash instead of `password`.
+# # The server never sees the plaintext, so SCRAM credentials cannot be derived
+# # from it — supply them explicitly for SASL SCRAM-SHA-256. Both lines are
+# # printed together by `ferrixd hash-password --toml`.
+# # password_hash = "$argon2id$v=19$m=19456,t=2,p=1$...$..."
+# # scram = "4096:<b64 salt>:<b64 stored_key>:<b64 server_key>"
+# # SASL EXTERNAL: permitted client-cert SHA-256 fingerprints (lowercase hex).
+# # fingerprints = ["a1b2c3..."]
+
+# --- IRC operators (used by the OPER command) ---
+# [[operators]]
+# name = "admin"
+# password = "change-me"          # or password_hash = "$argon2id$..."
+# # Optional hostmask allowlist for this block: `nick!user@host` globs or bare
+# # IPs. OPER from anywhere else is refused with 491. Empty/omitted = any host.
+# # hosts = ["*!*@203.0.113.7", "*!*@*.trusted.example"]
+
+# --- Startup server bans (K-Lines), matched at registration ---
+# [[bans]]
+# mask = "*!*@203.0.113.0/24"     # nick!user@host glob (* and ?)
+# reason = "Banned network"
+
+# --- Durable persistence (SQLite; optional) ---
+# When set, chathistory AND channel registrations survive restarts (they share
+# the same database file). Omit for in-memory-only state.
+# [persistence]
+# path = "/var/lib/ferrixd/ferrixd.db"
+# load_limit = 5000               # recent messages to load into RAM at startup
+
+# --- Prometheus metrics endpoint (optional; bind to loopback) ---
+# [metrics]
+# bind = "127.0.0.1:9090"         # scrape at http://127.0.0.1:9090/metrics
+
+# --- WASM plugin host (optional) ---
+# Loads every *.wasm file in `dir` at startup. Plugins are sandboxed and run
+# under a per-call fuel (instruction) budget; a plugin's on_message hook may
+# block channel messages. See crates/ferrixd/src/plugin.rs for the ABI.
+# [plugins]
+# dir = "/etc/ferrixd/plugins"
+# fuel = 5000000
+
+# --- S2S peer links ---
+# Trust is the pinned TLS certificate fingerprint plus the shared password.
+# Set server.link_bind above to accept inbound links.
+# Links refuse to form cycles: keep the topology a tree.
+# [[links]]
+# name = "irc.peer.test"
+# connect = "peer.example:6666"   # omit for accept-only links
+# fingerprint = "a1b2c3…"         # peer cert SHA-256 (lowercase hex)
+# password = "shared-link-secret"
+# protocol = "ferrix"             # or "ts6" to bridge a charybdis-family
+#                                 # IRCd (solanum, …) into the network

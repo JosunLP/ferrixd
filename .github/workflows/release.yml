@@ -1,0 +1,146 @@
+name: Release
+
+# Pushing a tag `vX.Y.Z` builds the daemon for every supported platform and
+# publishes a GitHub release with the binaries and SHA-256 checksums attached.
+# The asset names are version-less (ferrixd-<target>.tar.gz) so that
+# `releases/latest/download/…` is a stable URL for scripts/install.sh.
+#
+# `workflow_dispatch` runs the same builds as a dry run without publishing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Refuse to release a tag whose version disagrees with Cargo.toml — that
+  # would ship binaries whose `ferrixd --version` lies about the release.
+  sanity:
+    name: tag matches version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare tag against the workspace version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            ver="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$ver" != "$tag" ]; then
+              echo "::error::tag v$tag does not match Cargo.toml workspace version $ver"
+              exit 1
+            fi
+          else
+            echo "manual dispatch — dry run, no version check"
+          fi
+
+  build:
+    name: ${{ matrix.target }}
+    needs: sanity
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: static musl binaries — run on any distro, no libc dependency
+          # (same recipe as the Dockerfile).
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, cross: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, cross: true }
+          # FreeBSD and Android (Termux) are cross-compiled via the `cross`
+          # container images, which carry the matching C toolchains for the
+          # bundled C in the tree (ring's shims, rusqlite's sqlite3.c).
+          - { target: x86_64-unknown-freebsd, os: ubuntu-latest, cross: true }
+          - { target: aarch64-linux-android, os: ubuntu-latest, cross: true }
+          # Native builds on the platform's own runner.
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, cross: false }
+          - { target: aarch64-apple-darwin, os: macos-latest, cross: false }
+          - { target: x86_64-apple-darwin, os: macos-latest, cross: false }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --locked -p ferrixd --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --locked -p ferrixd --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          asset="ferrixd-${{ matrix.target }}.tar.gz"
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/$asset" ferrixd
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $asset = "ferrixd-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/ferrixd.exe" -DestinationPath "dist/$asset"
+          $hash = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLower()
+          # sha256sum-compatible line, LF, no BOM — scripts/install.sh parses this too.
+          [IO.File]::WriteAllText("dist/$asset.sha256", "$hash  $asset`n")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ferrixd-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combined checksum manifest
+        run: cd dist && sha256sum ferrixd-*.tar.gz ferrixd-*.zip > SHA256SUMS
+
+      # Re-runs of this job update the existing release instead of failing.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ferrixd $GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes \
+            dist/* \
+          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*

@@ -1,0 +1,26 @@
+# Build output
+/target
+/fuzz/target
+/loadtest/target
+
+# Fuzzing state
+/fuzz/corpus
+/fuzz/artifacts
+/fuzz/coverage
+
+# Local runtime state / secrets — never commit real certs or keys
+/ferrixd.toml
+*.pem
+*.key
+*.crt
+!crates/**/testdata/*.pem
+
+# Editor / OS
+*.swp
+.DS_Store
+/.idea
+/.vscode
+
+/docs/node_modules
+/docs/.vitepress/cache
+/docs/.vitepress/dist

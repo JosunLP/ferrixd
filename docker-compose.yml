@@ -1,0 +1,28 @@
+services:
+  ferrixd:
+    build: .
+    image: ferrixd
+    container_name: ferrixd
+    restart: unless-stopped
+    ports:
+      - "6697:6697" # TLS — the primary client port
+      # - "6667:6667"             # plaintext (only if enabled in ferrixd.toml)
+      # - "6666:6666"             # S2S link listener (server.link_bind)
+      # - "127.0.0.1:9090:9090"   # Prometheus metrics ([metrics] bind)
+    volumes:
+      # Config lives on the host; reference TLS PEM files from inside it via
+      # additional mounts (e.g. ./certs:/etc/ferrixd/certs:ro).
+      - ./ferrixd.toml:/etc/ferrixd/ferrixd.toml:ro
+      # Durable state: point [persistence] path at /var/lib/ferrixd/ferrixd.db
+      # so chathistory and channel registrations survive container recreation.
+      - ferrixd-data:/var/lib/ferrixd
+    healthcheck:
+      # A bare TCP connect to the TLS listener; adjust if you move tls_bind.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "6697"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  ferrixd-data:
