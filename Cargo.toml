@@ -47,7 +47,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 # --- TLS (rustls + ring so the build needs no cmake/openssl) ---
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 # --- data structures & parsing helpers ---
 smallvec = { version = "1", features = ["union", "const_generics"] }
