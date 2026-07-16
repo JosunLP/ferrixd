@@ -60,7 +60,7 @@ argon2 = "0.5"
 subtle = "2"
 base64 = "0.22"
 sha2 = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
 # --- persistence ---
