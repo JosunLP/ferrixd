@@ -1691,11 +1691,13 @@ async fn join_zero_parts_every_channel() {
     }
 
     alice.send("JOIN 0").await;
-    let seen = bob.expect("PART #two").await;
-    assert!(
-        seen.contains("PART #one") && seen.contains("PART #two"),
-        "JOIN 0 did not part every channel: {seen}"
-    );
+    // JOIN 0 parts every channel, but the order of the PART messages follows
+    // the server's (non-deterministic) channel iteration order. Read PART lines
+    // until both channels have been seen instead of assuming #two arrives last.
+    let mut seen = String::new();
+    while !(seen.contains("PART #one") && seen.contains("PART #two")) {
+        seen.push_str(&bob.expect("PART #").await);
+    }
 }
 
 #[tokio::test]
