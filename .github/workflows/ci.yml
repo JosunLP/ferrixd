@@ -53,6 +53,11 @@ jobs:
   fuzz:
     name: fuzz (smoke)
     runs-on: ubuntu-latest
+    # `rust-toolchain.toml` pins the workspace to stable; cargo-fuzz needs the
+    # nightly `-Z` sanitizer flags. RUSTUP_TOOLCHAIN outranks the toolchain file,
+    # so every cargo/rustc call in this job resolves to nightly.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@v4
 
