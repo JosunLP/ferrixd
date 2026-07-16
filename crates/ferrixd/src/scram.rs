@@ -7,7 +7,7 @@
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 const LEN: usize = 32;
@@ -101,7 +101,7 @@ pub fn deterministic_salt(seed: &str) -> Vec<u8> {
 #[must_use]
 pub fn random_nonce() -> Option<String> {
     let mut bytes = [0u8; 18];
-    getrandom::getrandom(&mut bytes).ok()?;
+    getrandom::fill(&mut bytes).ok()?;
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         out.push_str(&format!("{b:02x}"));

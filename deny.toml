@@ -5,12 +5,6 @@
 version = 2
 # Fail on any RUSTSEC advisory affecting the dependency graph.
 yanked = "deny"
-ignore = [
-    # `paste` is a feature-complete, widely-used proc-macro crate flagged only as
-    # unmaintained (not vulnerable). It reaches us transitively via the wasmi
-    # plugin runtime. Revisit if wasmi drops it or a real vulnerability appears.
-    "RUSTSEC-2024-0436",
-]
 
 [bans]
 # Prefer a lean graph; flag accidental multiple-version pileups as we grow.
@@ -30,6 +24,10 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-3.0",
+    # foldhash (hashbrown's default hasher, reached via rusqlite -> hashlink).
+    # Zlib is a permissive, OSI-approved, FSF Free/Libre license, compatible
+    # with the project's MIT/Apache-2.0 dual license.
+    "Zlib",
 ]
 confidence-threshold = 0.9
 

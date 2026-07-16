@@ -1,5 +1,13 @@
 # Dependabot keeps dependencies and CI actions current.
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Grouping policy: bundle version bumps into as few PRs as possible so
+# interdependent crates (e.g. the sha2/hmac/pbkdf2 stack, which all track the
+# same `digest` version) update together and actually compile. Without this,
+# each 0.x crate — where Cargo/Dependabot treat a minor bump as breaking — opens
+# its own PR, and the ones that share a transitive dependency fail CI in
+# isolation. `patterns: ["*"]` plus all three update-types puts every bump in one
+# group per ecosystem; security updates still come as their own dedicated PRs.
 version: 2
 updates:
   # --- Rust workspace (ferrix-protocol + ferrixd) ---
@@ -16,11 +24,10 @@ updates:
       prefix: "deps"
       prefix-development: "deps-dev"
     groups:
-      # One PR per week for routine patch/minor bumps keeps the noise down;
-      # major bumps still come as individual, reviewable PRs.
-      cargo-minor:
+      cargo:
         applies-to: version-updates
-        update-types: ["minor", "patch"]
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
 
   # --- GitHub Actions used by CI, docs, and release workflows ---
   - package-ecosystem: github-actions
@@ -37,6 +44,7 @@ updates:
       github-actions:
         applies-to: version-updates
         patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
 
   # --- Documentation site (VitePress / npm) ---
   - package-ecosystem: npm
@@ -50,6 +58,7 @@ updates:
     commit-message:
       prefix: "docs"
     groups:
-      docs-deps:
+      docs:
         applies-to: version-updates
-        update-types: ["minor", "patch"]
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]

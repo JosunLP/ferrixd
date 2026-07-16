@@ -406,8 +406,11 @@ pub enum ConfigError {
     Parse {
         /// The path we tried to parse.
         path: PathBuf,
-        /// The underlying TOML error.
-        source: toml::de::Error,
+        /// The underlying TOML error. Boxed because `toml::de::Error` is large
+        /// (it carries the input span); keeping it inline would bloat every
+        /// `Result<_, ConfigError>` on the cold config-loading path
+        /// (clippy::result_large_err).
+        source: Box<toml::de::Error>,
     },
     /// The configuration was internally inconsistent.
     #[error("invalid config: {0}")]
@@ -428,7 +431,7 @@ impl Config {
         })?;
         let config: Config = toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         })?;
         config.validate()?;
         Ok(config)
@@ -446,7 +449,7 @@ impl Config {
     pub fn from_toml(text: &str) -> Result<Self, ConfigError> {
         let config: Config = toml::from_str(text).map_err(|source| ConfigError::Parse {
             path: PathBuf::from("<builtin>"),
-            source,
+            source: Box::new(source),
         })?;
         config.validate()?;
         Ok(config)

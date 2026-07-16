@@ -1,0 +1,51 @@
+name: PR Labels
+
+# Every PR must carry at least one "type of change" label. This mirrors the
+# "Type of change" section of the PR template and feeds the changelog
+# categorisation in .github/release.yml. Add this job to the branch protection
+# rule for `main` as a required status check to make it truly blocking.
+
+on:
+  pull_request:
+    # `labeled`/`unlabeled` re-run the check so it turns green the moment a
+    # maintainer adds a label — no need to push a new commit.
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  require-type-label:
+    name: require a type label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require at least one type label
+        uses: mheap/github-action-required-labels@v5
+        with:
+          mode: minimum
+          count: 1
+          labels: |
+            bug
+            fix
+            enhancement
+            feature
+            performance
+            refactor
+            documentation
+            ci
+            chore
+            dependencies
+            security
+            breaking-change
+            protocol
+            conformance
+          message: >-
+            This PR needs at least one type-of-change label
+            (e.g. bug, enhancement, documentation, refactor, …).
+            See the "Type of change" section of the PR template — a maintainer
+            will add one during triage if you're not able to.

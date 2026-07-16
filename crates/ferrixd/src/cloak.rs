@@ -4,7 +4,7 @@
 //! HMAC-keyed pseudonym, so `WHOIS`/`JOIN`/messages never leak the address.
 //! Server bans (K-/D-Lines) still match the real IP — cloaking is display-only.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 /// Cloak a source IP as `aa.bb.cc.<network>`, keyed by `secret`. The mapping is

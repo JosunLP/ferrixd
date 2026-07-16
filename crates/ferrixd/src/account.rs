@@ -292,7 +292,7 @@ impl AccountStore {
 /// Gather 16 random bytes from the OS CSPRNG for use as a credential salt.
 fn random_salt_bytes() -> Result<[u8; 16], String> {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes).map_err(|e| format!("gathering entropy for salt: {e}"))?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("gathering entropy for salt: {e}"))?;
     Ok(bytes)
 }
 

@@ -1,0 +1,117 @@
+# Canonical label set for ferrixd — the single source of truth.
+#
+# The `Sync Labels` workflow (.github/workflows/labels.yml) applies this file to
+# the repository whenever it changes on `main`, so edit labels HERE, not in the
+# GitHub UI. Colours are hex without the leading `#`.
+#
+# Every label named below is wired to something concrete:
+#   - the `type` labels are what the mandatory PR check requires (pr-labels.yml)
+#   - release.yml categorises the changelog by these labels
+#   - dependabot.yml and the issue templates apply a subset automatically
+#
+# crazy-max/ghaction-github-labeler format: https://github.com/crazy-max/ghaction-github-labeler
+
+# ── Type of change ──────────────────────────────────────────────────────────
+# At least one of these must be present on every PR (see pr-labels.yml).
+- name: bug
+  color: d73a4a
+  description: Something isn't working
+- name: fix
+  color: d73a4a
+  description: A fix not tied to a separately tracked bug
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+- name: feature
+  color: a2eeef
+  description: A new, user-visible capability
+- name: performance
+  color: fbca04
+  description: Throughput, latency, or memory improvement
+- name: refactor
+  color: c5def5
+  description: Internal change with no behaviour change
+- name: documentation
+  color: 0075ca
+  description: Improvements or additions to documentation
+- name: ci
+  color: bfd4f2
+  description: CI, build, tooling, or release automation
+- name: chore
+  color: ededed
+  description: Routine maintenance with no user-facing effect
+- name: dependencies
+  color: 0366d6
+  description: Dependency bumps and lockfile updates
+- name: security
+  color: ee0701
+  description: Security-relevant fix or hardening
+- name: breaking-change
+  color: b60205
+  description: Incompatible with the 1.x stability promise
+
+# ── Protocol & conformance (project-specific) ───────────────────────────────
+- name: protocol
+  color: 5319e7
+  description: IRC client or S2S wire-protocol behaviour
+- name: conformance
+  color: 6f42c1
+  description: RFC 1459/2812 or IRCv3 spec conformance
+
+# ── Status / workflow ───────────────────────────────────────────────────────
+- name: triage
+  color: fef2c0
+  description: Awaiting maintainer triage
+- name: needs-info
+  color: d4c5f9
+  description: Blocked on more information from the reporter
+- name: blocked
+  color: d93f0b
+  description: Blocked by another issue, PR, or upstream
+- name: do-not-merge
+  color: "000000"
+  description: Do not merge — work in progress or on hold
+- name: ready-for-review
+  color: 0e8a16
+  description: Ready for maintainer review
+
+# ── Resolution ──────────────────────────────────────────────────────────────
+- name: duplicate
+  color: cfd3d7
+  description: This issue or pull request already exists
+- name: invalid
+  color: e4e669
+  description: This doesn't seem right
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
+- name: ignore-for-release
+  color: ededed
+  description: Exclude from automatically generated release notes
+
+# ── Priority ────────────────────────────────────────────────────────────────
+- name: "priority: critical"
+  color: b60205
+  description: Drop everything — data loss, crash, or security
+- name: "priority: high"
+  color: d93f0b
+  description: Address soon
+- name: "priority: low"
+  color: 0e8a16
+  description: Nice to have, no urgency
+
+# ── Community ───────────────────────────────────────────────────────────────
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+- name: question
+  color: d876e3
+  description: Further information is requested
+
+# ── Ecosystem ───────────────────────────────────────────────────────────────
+- name: rust
+  color: dea584
+  description: Touches Rust code or the Cargo workspace

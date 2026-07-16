@@ -190,10 +190,8 @@ impl PluginHost {
         register_host_api(&mut linker).context("registering host API")?;
 
         let instance = linker
-            .instantiate(&mut store, &module)
-            .context("instantiating module")?
-            .start(&mut store)
-            .context("running start function")?;
+            .instantiate_and_start(&mut store, &module)
+            .context("instantiating module")?;
 
         let memory = instance
             .get_memory(&store, "memory")

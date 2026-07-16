@@ -645,7 +645,7 @@ fn cmd_hash_password(confirm: bool, toml: bool) -> Result<ExitCode> {
     // PLAIN, the SCRAM token enables SCRAM-SHA-256 (which cannot be derived
     // from the hash, so it has to be minted here alongside it).
     let mut salt = [0u8; 16];
-    getrandom::getrandom(&mut salt)
+    getrandom::fill(&mut salt)
         .map_err(|e| anyhow::anyhow!("gathering entropy for the SCRAM salt: {e}"))?;
     let creds = crate::scram::derive(
         &password,
@@ -681,7 +681,7 @@ fn read_password(confirm: bool) -> Result<String> {
 /// Hash a password to an Argon2id PHC string using a fresh random salt.
 fn hash_argon2(password: &str) -> Result<String> {
     let mut salt = [0u8; 16];
-    getrandom::getrandom(&mut salt).map_err(|e| anyhow::anyhow!("gathering entropy: {e}"))?;
+    getrandom::fill(&mut salt).map_err(|e| anyhow::anyhow!("gathering entropy: {e}"))?;
     let salt = SaltString::encode_b64(&salt).map_err(|e| anyhow::anyhow!("encoding salt: {e}"))?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)

@@ -1,0 +1,36 @@
+name: Sync Labels
+
+# Applies .github/labels.yml (the source of truth) to the repository's labels.
+# Runs on every change to the label definitions, and can be triggered by hand.
+# `skip-delete` keeps labels that aren't listed in the file, so this never
+# removes a label out from under an open issue or PR.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/labels.yml
+      - .github/workflows/labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: labels-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: sync labels from labels.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Apply labels
+        uses: crazy-max/ghaction-github-labeler@v5
+        with:
+          yaml-file: .github/labels.yml
+          skip-delete: true
+          dry-run: false

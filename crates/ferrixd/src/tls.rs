@@ -116,7 +116,7 @@ pub fn generate_self_signed_pem(hostnames: &[String]) -> Result<GeneratedCert> {
     let fingerprint = cert_fingerprint(certified.cert.der());
     Ok(GeneratedCert {
         cert_pem: certified.cert.pem(),
-        key_pem: certified.key_pair.serialize_pem(),
+        key_pem: certified.signing_key.serialize_pem(),
         fingerprint,
     })
 }
@@ -287,6 +287,6 @@ fn generate_self_signed(
     };
     let certified = rcgen::generate_simple_self_signed(names)?;
     let cert_der = certified.cert.der().clone();
-    let key_der = PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der());
+    let key_der = PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());
     Ok((vec![cert_der], PrivateKeyDer::Pkcs8(key_der)))
 }
