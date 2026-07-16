@@ -25,7 +25,7 @@ jobs:
     name: tag matches version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Compare tag against the workspace version
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
@@ -61,7 +61,7 @@ jobs:
           - { target: aarch64-apple-darwin, os: macos-latest, cross: false }
           - { target: x86_64-apple-darwin, os: macos-latest, cross: false }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -110,7 +110,7 @@ jobs:
           # sha256sum-compatible line, LF, no BOM — scripts/install.sh parses this too.
           [IO.File]::WriteAllText("dist/$asset.sha256", "$hash  $asset`n")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ferrixd-${{ matrix.target }}
           path: dist/*
@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
