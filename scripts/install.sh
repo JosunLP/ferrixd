@@ -8,7 +8,7 @@
 #
 # Supported platforms: Linux x86_64/aarch64/i686/armv7/armv6 (fully static
 # musl — runs on any distro and any libc/kernel vintage), macOS (Apple Silicon
-# + Intel), FreeBSD x86_64/aarch64/i686, Android aarch64 (Termux). Windows
+# + Intel), FreeBSD x86_64/i686, Android aarch64 (Termux). Windows
 # users: scripts/install.ps1 (x64/ARM64/x86). Every download is verified
 # against the release's SHA-256 checksum before anything is written to the
 # install directory.
@@ -111,7 +111,6 @@ detect_target() {
         Darwin/x86_64) TARGET=x86_64-apple-darwin ;;
         Darwin/aarch64) TARGET=aarch64-apple-darwin ;;
         FreeBSD/x86_64) TARGET=x86_64-unknown-freebsd ;;
-        FreeBSD/aarch64) TARGET=aarch64-unknown-freebsd ;;
         FreeBSD/i686) TARGET=i686-unknown-freebsd ;;
         *) die "no prebuilt binary for $os/$arch — build from source instead: cargo build --release -p ferrixd" ;;
     esac

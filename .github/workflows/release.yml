@@ -62,12 +62,12 @@ jobs:
           - { target: i686-unknown-linux-musl, os: ubuntu-latest, cross: true }
           - { target: armv7-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
           - { target: arm-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
-          # FreeBSD (x86_64/aarch64/i686) and Android (Termux) are cross-compiled
-          # via the `cross` container images, which carry the matching C
-          # toolchains for the bundled C in the tree (ring's shims, rusqlite's
-          # sqlite3.c).
+          # FreeBSD (x86_64/i686) and Android (Termux) are cross-compiled via the
+          # `cross` container images, which carry the matching C toolchains for
+          # the bundled C in the tree (ring's shims, rusqlite's sqlite3.c).
+          # aarch64-unknown-freebsd is omitted: it is a Rust tier-3 target with no
+          # prebuilt `rust-std` on stable (would require -Z build-std on nightly).
           - { target: x86_64-unknown-freebsd, os: ubuntu-latest, cross: true }
-          - { target: aarch64-unknown-freebsd, os: ubuntu-latest, cross: true }
           - { target: i686-unknown-freebsd, os: ubuntu-latest, cross: true }
           - { target: aarch64-linux-android, os: ubuntu-latest, cross: true }
           # Native builds on the platform's own runner. Windows uses MSVC (not
