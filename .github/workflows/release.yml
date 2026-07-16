@@ -62,13 +62,21 @@ jobs:
           - { target: i686-unknown-linux-musl, os: ubuntu-latest, cross: true }
           - { target: armv7-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
           - { target: arm-unknown-linux-musleabihf, os: ubuntu-latest, cross: true }
-          # FreeBSD and Android (Termux) are cross-compiled via the `cross`
-          # container images, which carry the matching C toolchains for the
-          # bundled C in the tree (ring's shims, rusqlite's sqlite3.c).
+          # FreeBSD (x86_64/aarch64/i686) and Android (Termux) are cross-compiled
+          # via the `cross` container images, which carry the matching C
+          # toolchains for the bundled C in the tree (ring's shims, rusqlite's
+          # sqlite3.c).
           - { target: x86_64-unknown-freebsd, os: ubuntu-latest, cross: true }
+          - { target: aarch64-unknown-freebsd, os: ubuntu-latest, cross: true }
+          - { target: i686-unknown-freebsd, os: ubuntu-latest, cross: true }
           - { target: aarch64-linux-android, os: ubuntu-latest, cross: true }
-          # Native builds on the platform's own runner.
+          # Native builds on the platform's own runner. Windows uses MSVC (not
+          # GNU) — the platform-standard, better-supported toolchain — and covers
+          # x64, ARM64 (Windows on ARM), and 32-bit x86. macOS ships both arches
+          # that exist (Apple Silicon + Intel), so Mac coverage is already total.
           - { target: x86_64-pc-windows-msvc, os: windows-latest, cross: false }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest, cross: false }
+          - { target: i686-pc-windows-msvc, os: windows-latest, cross: false }
           - { target: aarch64-apple-darwin, os: macos-latest, cross: false }
           - { target: x86_64-apple-darwin, os: macos-latest, cross: false }
     steps:
@@ -206,6 +214,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # id-token + attestations let us cryptographically attest that these exact
+      # binaries were built by this workflow (SLSA build provenance). Consumers
+      # verify with: gh attestation verify <file> --repo <owner>/ferrixd
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -221,3 +234,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+
+      # Provenance for the distributable archives (after upload, so a hiccup here
+      # never blocks the release assets themselves).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/ferrixd-*.tar.gz
+            dist/ferrixd-*.zip

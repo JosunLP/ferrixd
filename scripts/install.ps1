@@ -38,7 +38,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Repo = 'josunlp/ferrixd'
-$Asset = 'ferrixd-x86_64-pc-windows-msvc.zip'
+
+# Pick the native binary for this machine. PROCESSOR_ARCHITEW6432 is set when a
+# 32-bit process runs on a 64-bit OS and reports the real (64-bit) arch.
+$winArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+$target = switch ($winArch) {
+    'ARM64' { 'aarch64-pc-windows-msvc' }
+    'AMD64' { 'x86_64-pc-windows-msvc' }
+    'x86' { 'i686-pc-windows-msvc' }
+    default { 'x86_64-pc-windows-msvc' }
+}
+$Asset = "ferrixd-$target.zip"
 $Exe = Join-Path $Dir 'ferrixd.exe'
 
 function Get-UserPath { [string][Environment]::GetEnvironmentVariable('Path', 'User') }
@@ -65,10 +75,6 @@ if ($Command -eq 'uninstall') {
     Remove-DirFromUserPath $Dir
     Write-Host "uninstalled ferrixd from $Dir. Config files and databases were left untouched."
     return
-}
-
-if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
-    Write-Host 'note: no native Windows-ARM64 build yet - installing the x64 binary (runs via emulation on Windows 11).'
 }
 
 $old = $null
