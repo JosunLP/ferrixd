@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitepress'
+import { defineConfig } from 'vitepress';
 
 export default defineConfig({
   title: 'ferrixd',
@@ -30,7 +30,11 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/what-is-ferrixd', activeMatch: '/guide/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '/reference/' },
-      { text: 'Internals', link: '/internals/architecture', activeMatch: '/internals/' },
+      {
+        text: 'Internals',
+        link: '/internals/architecture',
+        activeMatch: '/internals/',
+      },
       {
         text: 'Install',
         link: '/guide/installation',
@@ -104,14 +108,16 @@ export default defineConfig({
       ],
     },
 
-    socialLinks: [{ icon: 'github', link: 'https://github.com/j-pfalzgraf/ferrixd' }],
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/josunlp/ferrixd' },
+    ],
 
     search: {
       provider: 'local',
     },
 
     editLink: {
-      pattern: 'https://github.com/j-pfalzgraf/ferrixd/edit/main/docs/:path',
+      pattern: 'https://github.com/josunlp/ferrixd/edit/main/docs/:path',
       text: 'Edit this page on GitHub',
     },
 
@@ -122,4 +128,4 @@ export default defineConfig({
 
     outline: { level: [2, 3] },
   },
-})
+});
