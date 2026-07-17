@@ -1800,14 +1800,17 @@ impl Server {
             .ok_or_else(|| "no config path recorded".to_owned())?;
         let config = Config::load(&path).map_err(|e| e.to_string())?;
 
-        // Validate TLS material first before committing any configuration changes,
-        // so a TLS reload failure leaves the prior configuration entirely unchanged.
-        if let Some(tls) = self.tls.get() {
-            tls.reload(&config.tls)
-                .map_err(|e| format!("reloading TLS material: {e}"))?;
-        }
-
-        // Rebuild link client TLS config if outbound links are configured.
+        // Stage every reloadable piece first — nothing is committed until all
+        // of them validate, so a failed REHASH leaves the prior configuration
+        // (TLS material included) entirely unchanged.
+        let staged_tls = if self.tls.get().is_some() {
+            Some(
+                crate::tls::build_server_config(&config.tls)
+                    .map_err(|e| format!("reloading TLS material: {e}"))?,
+            )
+        } else {
+            None
+        };
         let link_client = if !config.links.is_empty() {
             Some(
                 crate::tls::build_link_client_config(&config.tls)
@@ -1819,6 +1822,9 @@ impl Server {
 
         // Only after all validation succeeds, commit the configuration.
         self.apply_config(&config)?;
+        if let (Some(tls), Some(staged)) = (self.tls.get(), staged_tls) {
+            tls.install(staged);
+        }
         *self.link_client_config.write() = link_client;
         Ok(())
     }

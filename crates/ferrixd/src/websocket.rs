@@ -39,6 +39,11 @@ const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HANDSHAKE_BYTES: usize = 8 * 1024;
 /// How many socket bytes to read per `poll_read` of the underlying stream.
 const READ_CHUNK: usize = 8 * 1024;
+/// Hard cap on encoded outbound bytes queued for the socket. A peer that keeps
+/// the pipe full while forcing us to queue control responses (e.g. a PING
+/// flood against a non-reading client) is disconnected instead of growing
+/// `tx_raw` without bound.
+const MAX_TX_BUFFER: usize = 1024 * 1024;
 
 /// WebSocket opcodes (RFC 6455 §5.2).
 const OP_CONTINUATION: u8 = 0x0;
@@ -507,6 +512,12 @@ where
             // unbounded growth if a client sends only PING frames.
             if !this.tx_raw.is_empty() {
                 let _ = this.poll_drain(cx);
+            }
+            // If the peer refuses to read while forcing us to queue responses,
+            // give up rather than buffer without bound.
+            if this.tx_raw.len() > MAX_TX_BUFFER {
+                this.read_eof = true;
+                return Poll::Ready(Err(io::Error::other("websocket send backlog exceeded")));
             }
             match this.take_frame() {
                 FrameStatus::Frame(fin, opcode, payload) => {

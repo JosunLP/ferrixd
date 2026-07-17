@@ -55,8 +55,16 @@ impl SharedServerTls {
     /// the listener.
     pub fn reload(&self, cfg: &TlsConfig) -> Result<()> {
         let rebuilt = build_server_config(cfg)?;
-        *self.config.write() = rebuilt;
+        self.install(rebuilt);
         Ok(())
+    }
+
+    /// Swap in an already-built configuration (see [`build_server_config`]).
+    ///
+    /// Lets `REHASH` stage/validate the new material first and commit it only
+    /// after every other part of the reload has succeeded.
+    pub fn install(&self, config: Arc<ServerConfig>) {
+        *self.config.write() = config;
     }
 }
 

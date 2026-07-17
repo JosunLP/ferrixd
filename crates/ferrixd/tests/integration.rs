@@ -2169,13 +2169,10 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WsTestClient<S> {
         let mut resp = Vec::new();
         let mut byte = [0u8; 1];
         loop {
-            let n = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                io.read(&mut byte),
-            )
-            .await
-            .expect("WebSocket handshake timed out")
-            .unwrap();
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), io.read(&mut byte))
+                .await
+                .expect("WebSocket handshake timed out")
+                .unwrap();
             assert!(n == 1, "EOF during handshake response");
             resp.push(byte[0]);
             if resp.ends_with(b"\r\n\r\n") {
