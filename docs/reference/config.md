@@ -21,6 +21,7 @@ Identity and listeners.
 | --- | --- | --- | --- |
 | `name` | string | **required** | advertised server name, used in numerics and message prefixes |
 | `network` | string | `"ferrixnet"` | network name (`ISUPPORT NETWORK=`) |
+| `icon` | string | *unset* | network icon URL (IRCv3 `draft/network-icon`), advertised as `ISUPPORT draft/ICON=`; use an HTTPS URL to a (square) image, optionally with a `{size}` template |
 | `casemapping` | `"ascii"` \| `"rfc1459"` | `"ascii"` | nick/channel case folding; must be identical network-wide |
 | `motd` | array of string | `[]` | message of the day, one entry per line; `REHASH`-reloadable |
 | `cloak_key` | string | *unset* | HMAC key enabling [host cloaking](/guide/operators#host-cloaking); omit to disable; keep secret and identical on linked servers |
@@ -28,12 +29,14 @@ Identity and listeners.
 | `link_bind` | socket address | *unset* | inbound S2S listener, e.g. `"0.0.0.0:6666"` |
 | `tls_bind` | socket address | **required** | primary TLS listener, e.g. `"0.0.0.0:6697"` |
 | `plain_bind` | socket address | *unset* | plaintext listener; loopback-only unless `allow_plain_nonlocal` |
-| `allow_plain_nonlocal` | bool | `false` | permit a non-loopback `plain_bind` (e.g. behind a local TLS-terminating proxy) |
+| `allow_plain_nonlocal` | bool | `false` | permit a non-loopback `plain_bind` **or** `ws_bind` (e.g. behind a local TLS-terminating proxy) |
+| `wss_bind` | socket address | *unset* | secure WebSocket (`wss://`) listener; terminates TLS with the `[tls]` certificate, then negotiates the `text.ircv3.net`/`binary.ircv3.net` subprotocols |
+| `ws_bind` | socket address | *unset* | plaintext WebSocket (`ws://`) listener; loopback-only unless `allow_plain_nonlocal` (prefer `wss_bind`) |
 | `password` | string | *unset* | connection password: clients must send a matching `PASS` before registration (464 otherwise); `REHASH`-reloadable |
 | `sts` | table | *unset* | IRCv3 strict transport security policy: `{ port = 6697, duration = 2592000, preload = false }`; plaintext connections are told the TLS `port`, TLS connections the `duration` (seconds; `0` clears the policy) |
 
-**Validation:** a non-loopback `plain_bind` with `allow_plain_nonlocal =
-false` is a configuration error.
+**Validation:** a non-loopback `plain_bind` or `ws_bind` with
+`allow_plain_nonlocal = false` is a configuration error.
 
 ## `[tls]` — required
 
@@ -110,6 +113,23 @@ Startup K-lines, enforced at registration.
 `REHASH`-reloadable. Runtime additions: `KLINE`/`DLINE`
 ([moderation guide](/guide/operators#the-moderation-toolbox)).
 
+## `[[webirc]]` — optional, repeatable
+
+Trusted WEBIRC gateways (IRCv3 `WEBIRC`). A web/IRC gateway may rewrite a
+client's apparent host and IP so users behind it are seen — and moderated — by
+their real address. Empty (the default) disables the `WEBIRC` command.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | **required** | gateway identifier, matched against the `WEBIRC <gateway>` parameter |
+| `password` | string | **required** | shared secret the gateway sends as `WEBIRC <password>`; compared in constant time — use a long random value |
+| `hosts` | array of string | **required** | source-address globs (e.g. `"127.0.0.1"`, `"10.0.0.*"`) the gateway may connect from |
+
+A `WEBIRC` is accepted only when it is the connection's **first** command
+(before `CAP`/`NICK`/`USER`/`PASS`), the real peer address matches one of
+`hosts`, **and** the password matches; the rewritten IP is then re-checked
+against D-lines. Any failure closes the connection. `REHASH`-reloadable.
+
 ## `[persistence]` — optional
 
 SQLite durability for history, registered channels, and self-registered
@@ -154,7 +174,13 @@ S2S peer definitions. See [Federation](/guide/federation).
 
 | Reloadable at runtime | Restart required |
 | --- | --- |
-| `[[accounts]]`, `[[operators]]`, `[[bans]]`, `server.motd`, `server.password` | listeners, `[tls]`, `[limits]`, `[persistence]`, `[metrics]`, `[plugins]`, `[[links]]`, `sid`, `cloak_key`, `casemapping` |
+| `[[accounts]]`, `[[operators]]`, `[[bans]]`, `[[webirc]]`, `server.motd`, `server.password`, `[tls]` certificate/key, `[[links]]` definitions | listener bind addresses, `[limits]`, `[persistence]`, `[metrics]`, `[plugins]`, `sid`, `cloak_key`, `casemapping` |
+
+`[tls]` certificate/key reload is live for every TLS listener (no dropped
+connections; a bad PEM leaves the previous material armed). `REHASH`
+refreshes the `[[links]]` definitions so operator `CONNECT` sees edits, but
+it does not start or stop the boot-time auto-dial loops — use
+`CONNECT`/`SQUIT` to bring newly added or removed links up or down.
 
 ## Complete annotated example
 

@@ -127,6 +127,8 @@ pub const RPL_UMODEIS: u16 = 221;
 pub const RPL_WHOISUSER: u16 = 311;
 pub const RPL_WHOISSERVER: u16 = 312;
 pub const RPL_WHOISOPERATOR: u16 = 313;
+/// IRCv3 bot-mode: `WHOIS` reply line identifying a user as a bot.
+pub const RPL_WHOISBOT: u16 = 335;
 pub const RPL_WHOISIDLE: u16 = 317;
 pub const RPL_WHOISSECURE: u16 = 671;
 pub const RPL_WHOISACTUALLY: u16 = 338;
@@ -153,6 +155,7 @@ pub const RPL_ENDOFMOTD: u16 = 376;
 
 // --- Errors ---
 pub const ERR_NOSUCHNICK: u16 = 401;
+pub const ERR_NOSUCHSERVER: u16 = 402;
 pub const ERR_NOSUCHCHANNEL: u16 = 403;
 pub const ERR_CANNOTSENDTOCHAN: u16 = 404;
 pub const ERR_INVALIDCAPCMD: u16 = 410;

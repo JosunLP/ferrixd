@@ -30,4 +30,5 @@ pub mod session;
 pub mod state;
 pub mod tls;
 pub mod ts6;
+pub mod websocket;
 pub mod wire;

@@ -38,7 +38,7 @@ features:
   - icon: 📡
     title: IRCv3-complete
     details: >-
-      26 capabilities including server-time, message-tags, batch,
+      29 capabilities including server-time, message-tags, batch,
       labeled-response, draft/chathistory, draft/multiline, and
       draft/metadata-2 — implemented against the spec text and covered by
       the integration suite.

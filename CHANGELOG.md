@@ -4,6 +4,50 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-07-17
+
+### Added
+
+- **IRC over WebSockets** — new `ws://` (`ws_bind`) and `wss://` (`wss_bind`)
+  listeners, negotiating the `text.ircv3.net` and `binary.ircv3.net`
+  subprotocols. Each IRC line is one WebSocket message (no CRLF on the wire);
+  TLS is terminated before the handshake and the byte stream reuses the existing
+  framing, rate-limiting, and SASL EXTERNAL path.
+- **WEBIRC** — trusted web/IRC gateways (`[[webirc]]` blocks) may rewrite a
+  client's apparent host and IP. A gateway must present the shared secret
+  (compared in constant time) **and** connect from an allow-listed source
+  address; the spoofed IP is re-checked against D-lines. `REHASH`-reloadable.
+- **Bot mode** (IRCv3) — user mode `+B`, advertised as `ISUPPORT BOT=B`, shown
+  in `WHOIS` (`RPL_WHOISBOT`, 335) and the `WHO` flags, and added as a bare
+  `@bot` message tag on a bot's messages. Synced across S2S links.
+- **`no-implicit-names`** capability — suppresses the automatic `NAMES` burst on
+  `JOIN` (explicit `NAMES` still replies).
+- **`draft/pre-away`** capability — accept `AWAY` before registration completes.
+- **`draft/extended-isupport`** capability — deliver `RPL_ISUPPORT` during CAP
+  negotiation, before `RPL_WELCOME`.
+- **`draft/network-icon`** — advertise a network icon URL as the `draft/ICON`
+  ISUPPORT token (`server.icon`).
+- **SASL reauthentication** — a registered client that negotiated `sasl` may
+  re-run `AUTHENTICATE` mid-session to switch to (or add) an account. The new
+  login replaces the old on success; a failed attempt leaves the existing login
+  untouched (IRCv3 SASL 3.2).
+- **Live link management** — operator `CONNECT <name>` dials a configured S2S
+  peer at runtime, and `SQUIT <server> [:reason]` tears a directly-linked peer
+  (and its subtree) down through the usual netsplit path.
+- **Per-command metric histograms** — `/metrics` now exposes
+  `ferrixd_command_duration_seconds`, a per-command handler-latency histogram.
+  Label cardinality is bounded to the known command verbs plus `other`.
+- **TLS reload without restart** — `REHASH` reloads the certificate and key for
+  every TLS listener (client, `wss://`, and the S2S link listener) without
+  dropping the process or any live connection; a failed reload keeps the
+  previous material armed.
+- **Plugin hooks for nick and topic changes** — the WASM host gains
+  `ferrix_on_nick` and `ferrix_on_topic`, which can observe and veto those
+  moderation events on the same fail-open ABI as messages and joins.
+
+The negotiable capability set grows from 26 to 29. `UTF8ONLY` remains enforced
+by the UTF-8-validating parser (non-UTF-8 content is never relayed).
+
 ## [1.0.0] — 2026-07-16
 
 The first stable release. ferrixd is a from-scratch, memory-safe, IRCv3
@@ -72,4 +116,5 @@ daemon is the product, the crates are its implementation.
 - Bounded SendQ, token-bucket rate limits, per-IP connection throttling, ping
   timeouts, K/D/G-lines, and HMAC host cloaking.
 
+[1.1.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.1.0
 [1.0.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.0.0

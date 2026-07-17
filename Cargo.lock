@@ -429,7 +429,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "ferrix-protocol"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "memchr",
  "smallvec",
@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "ferrixd"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -459,6 +459,7 @@ dependencies = [
  "rusqlite",
  "rustls",
  "serde",
+ "sha1",
  "sha2",
  "smallvec",
  "subtle",
@@ -1103,6 +1104,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
 ]
 
 [[package]]

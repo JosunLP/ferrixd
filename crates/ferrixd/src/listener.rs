@@ -4,19 +4,22 @@
 //! failures surface at startup and tests can listen on an ephemeral port.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::TlsAcceptor;
 use tracing::{debug, info, info_span, warn, Instrument};
 
 use crate::connection::{self, ConnContext};
+use crate::tls::SharedServerTls;
 
-/// Accept TLS connections forever, terminating TLS before handing off.
+/// Accept TLS connections forever, terminating TLS before handing off. The
+/// acceptor is rebuilt per connection from `tls`, so a `REHASH`-triggered
+/// certificate swap takes effect for new handshakes without a restart.
 pub async fn run_tls(
     listener: TcpListener,
-    acceptor: TlsAcceptor,
+    tls: Arc<SharedServerTls>,
     params: ConnContext,
     handshake_timeout: Duration,
 ) -> Result<()> {
@@ -37,7 +40,7 @@ pub async fn run_tls(
         };
         prepare(&stream, peer);
 
-        let acceptor = acceptor.clone();
+        let acceptor = tls.acceptor();
         let params = params.clone();
         tokio::spawn(async move {
             // A stalled TLS handshake must not pin a task/fd: bound it in time
@@ -88,6 +91,125 @@ pub async fn run_plain(listener: TcpListener, params: ConnContext) -> Result<()>
         let params = params.clone();
         tokio::spawn(async move {
             connection::serve(stream, peer, params, None, false)
+                .instrument(info_span!("conn", %peer))
+                .await;
+        });
+    }
+}
+
+/// Accept plaintext WebSocket (`ws://`) connections forever. Loopback-only by
+/// default (the config layer refuses a non-loopback plaintext bind); put a TLS
+/// terminating proxy in front, or use [`run_wss`], for anything public.
+pub async fn run_ws(
+    listener: TcpListener,
+    params: ConnContext,
+    handshake_timeout: Duration,
+) -> Result<()> {
+    let addr = listener
+        .local_addr()
+        .context("reading WebSocket listener local address")?;
+    warn!(%addr, "PLAINTEXT WebSocket listener accepting — traffic on this port is unencrypted");
+
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(err) => {
+                warn!(%addr, %err, "accept failed");
+                continue;
+            }
+        };
+        prepare(&stream, peer);
+
+        let params = params.clone();
+        tokio::spawn(async move {
+            // A stalled upgrade handshake must not pin a task/fd.
+            let max_line = params.max_line;
+            let ws = match tokio::time::timeout(
+                handshake_timeout,
+                crate::websocket::accept(stream, max_line),
+            )
+            .await
+            {
+                Ok(Ok(ws)) => ws,
+                Ok(Err(err)) => {
+                    debug!(%peer, %err, "WebSocket handshake failed");
+                    return;
+                }
+                Err(_elapsed) => {
+                    debug!(%peer, "WebSocket handshake timed out");
+                    return;
+                }
+            };
+            connection::serve(ws, peer, params, None, false)
+                .instrument(info_span!("conn", %peer))
+                .await;
+        });
+    }
+}
+
+/// Accept secure WebSocket (`wss://`) connections forever: terminate TLS, then
+/// perform the WebSocket handshake, then hand the byte stream to the connection
+/// layer (marked secure, with any client-certificate fingerprint for SASL
+/// EXTERNAL).
+pub async fn run_wss(
+    listener: TcpListener,
+    tls: Arc<SharedServerTls>,
+    params: ConnContext,
+    handshake_timeout: Duration,
+) -> Result<()> {
+    let addr = listener
+        .local_addr()
+        .context("reading secure WebSocket listener local address")?;
+    info!(%addr, "TLS WebSocket listener accepting");
+
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(err) => {
+                warn!(%addr, %err, "accept failed");
+                continue;
+            }
+        };
+        prepare(&stream, peer);
+
+        let acceptor = tls.acceptor();
+        let params = params.clone();
+        tokio::spawn(async move {
+            let tls = match tokio::time::timeout(handshake_timeout, acceptor.accept(stream)).await {
+                Ok(Ok(tls)) => tls,
+                Ok(Err(err)) => {
+                    debug!(%peer, %err, "TLS handshake failed");
+                    return;
+                }
+                Err(_elapsed) => {
+                    debug!(%peer, "TLS handshake timed out");
+                    return;
+                }
+            };
+            let cert_fp = tls
+                .get_ref()
+                .1
+                .peer_certificates()
+                .and_then(<[_]>::first)
+                .map(crate::tls::cert_fingerprint);
+            let max_line = params.max_line;
+            let ws = match tokio::time::timeout(
+                handshake_timeout,
+                crate::websocket::accept(tls, max_line),
+            )
+            .await
+            {
+                Ok(Ok(ws)) => ws,
+                Ok(Err(err)) => {
+                    debug!(%peer, %err, "WebSocket handshake failed");
+                    return;
+                }
+                Err(_elapsed) => {
+                    debug!(%peer, "WebSocket handshake timed out");
+                    return;
+                }
+            };
+            connection::serve(ws, peer, params, cert_fp, true)
                 .instrument(info_span!("conn", %peer))
                 .await;
         });

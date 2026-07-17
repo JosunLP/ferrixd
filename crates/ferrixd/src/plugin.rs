@@ -33,9 +33,16 @@
 //!    are exported, only v2 is called.
 //!  * `ferrix_on_join(ptr, len) -> i32` — receives
 //!    `{"nick":"<nick>","channel":"<#channel>"}`; non-zero blocks the join.
+//!  * `ferrix_on_nick(ptr, len) -> i32` — receives
+//!    `{"old":"<old-nick>","new":"<new-nick>"}`; non-zero blocks the nick
+//!    change (the client keeps its current nick).
+//!  * `ferrix_on_topic(ptr, len) -> i32` — receives
+//!    `{"nick":"<nick>","channel":"<#channel>","topic":"<text>"}`; non-zero
+//!    blocks the topic change.
 //!
 //! Both local and S2S-relayed channel messages pass through the message hooks,
-//! so policy is uniform across the network's entry points on this node.
+//! so policy is uniform across the network's entry points on this node. The
+//! `nick`/`topic` hooks fire for the moderation actions performed on this node.
 
 use std::path::Path;
 
@@ -71,6 +78,8 @@ struct PluginInstance {
     on_message: Option<TypedFunc<(i32, i32), i32>>,
     on_message_v2: Option<TypedFunc<(i32, i32), i32>>,
     on_join: Option<TypedFunc<(i32, i32), i32>>,
+    on_nick: Option<TypedFunc<(i32, i32), i32>>,
+    on_topic: Option<TypedFunc<(i32, i32), i32>>,
 }
 
 impl std::fmt::Debug for PluginInstance {
@@ -80,6 +89,8 @@ impl std::fmt::Debug for PluginInstance {
             .field("on_message", &self.on_message.is_some())
             .field("on_message_v2", &self.on_message_v2.is_some())
             .field("on_join", &self.on_join.is_some())
+            .field("on_nick", &self.on_nick.is_some())
+            .field("on_topic", &self.on_topic.is_some())
             .finish()
     }
 }
@@ -208,6 +219,12 @@ impl PluginHost {
         let on_join = instance
             .get_typed_func::<(i32, i32), i32>(&store, "ferrix_on_join")
             .ok();
+        let on_nick = instance
+            .get_typed_func::<(i32, i32), i32>(&store, "ferrix_on_nick")
+            .ok();
+        let on_topic = instance
+            .get_typed_func::<(i32, i32), i32>(&store, "ferrix_on_topic")
+            .ok();
 
         self.plugins.push(Mutex::new(PluginInstance {
             name: name.to_owned(),
@@ -217,6 +234,8 @@ impl PluginHost {
             on_message,
             on_message_v2,
             on_join,
+            on_nick,
+            on_topic,
         }));
         Ok(())
     }
@@ -288,6 +307,54 @@ impl PluginHost {
         for plugin in &self.plugins {
             let mut plugin = plugin.lock();
             let func = plugin.on_join;
+            if plugin.call(func, &event, self.fuel) == Verdict::Block {
+                return Verdict::Block;
+            }
+        }
+        Verdict::Allow
+    }
+
+    /// Run the `on_nick` hook of every plugin. A non-zero return blocks the
+    /// nick change (fail-open on traps, like the other hooks).
+    #[must_use]
+    pub fn on_nick(&self, old: &str, new: &str) -> Verdict {
+        if self.plugins.is_empty() {
+            return Verdict::Allow;
+        }
+        let mut event = String::with_capacity(old.len() + new.len() + 24);
+        event.push_str("{\"old\":");
+        push_json_string(&mut event, old);
+        event.push_str(",\"new\":");
+        push_json_string(&mut event, new);
+        event.push('}');
+        for plugin in &self.plugins {
+            let mut plugin = plugin.lock();
+            let func = plugin.on_nick;
+            if plugin.call(func, &event, self.fuel) == Verdict::Block {
+                return Verdict::Block;
+            }
+        }
+        Verdict::Allow
+    }
+
+    /// Run the `on_topic` hook of every plugin. A non-zero return blocks the
+    /// topic change (fail-open on traps, like the other hooks).
+    #[must_use]
+    pub fn on_topic(&self, nick: &str, channel: &str, topic: &str) -> Verdict {
+        if self.plugins.is_empty() {
+            return Verdict::Allow;
+        }
+        let mut event = String::with_capacity(nick.len() + channel.len() + topic.len() + 40);
+        event.push_str("{\"nick\":");
+        push_json_string(&mut event, nick);
+        event.push_str(",\"channel\":");
+        push_json_string(&mut event, channel);
+        event.push_str(",\"topic\":");
+        push_json_string(&mut event, topic);
+        event.push('}');
+        for plugin in &self.plugins {
+            let mut plugin = plugin.lock();
+            let func = plugin.on_topic;
             if plugin.call(func, &event, self.fuel) == Verdict::Block {
                 return Verdict::Block;
             }
@@ -488,6 +555,43 @@ mod tests {
         );
         // And a v1-only plugin ignores joins entirely.
         assert_eq!(host.on_join("alice", "#g"), Verdict::Allow);
+    }
+
+    // A plugin exporting the nick/topic hooks, both of which veto unconditionally.
+    const HOOK_BLOCKER: &str = r#"
+        (module
+          (memory (export "memory") 1)
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param $size i32) (result i32)
+            (local $p i32)
+            (local.set $p (global.get $next))
+            (global.set $next (i32.add (global.get $next) (local.get $size)))
+            (local.get $p))
+          (func (export "ferrix_on_nick") (param i32 i32) (result i32) (i32.const 1))
+          (func (export "ferrix_on_topic") (param i32 i32) (result i32) (i32.const 1)))
+    "#;
+
+    #[test]
+    fn nick_and_topic_hooks_veto() {
+        let wasm = wat::parse_str(HOOK_BLOCKER).unwrap();
+        let mut host = PluginHost::new(DEFAULT_FUEL);
+        host.load_bytes("hooks", &wasm).unwrap();
+        assert_eq!(host.on_nick("alice", "bob"), Verdict::Block);
+        assert_eq!(
+            host.on_topic("alice", "#general", "welcome"),
+            Verdict::Block
+        );
+    }
+
+    #[test]
+    fn missing_nick_topic_hooks_allow() {
+        // A plugin that exports neither hook must not block those events.
+        let host = host_with_blocker();
+        assert_eq!(host.on_nick("alice", "bob"), Verdict::Allow);
+        assert_eq!(
+            host.on_topic("alice", "#general", "welcome"),
+            Verdict::Allow
+        );
     }
 
     #[test]

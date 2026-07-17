@@ -49,7 +49,9 @@ oper connection is still a misbehaving connection.
 | `UNDLINE <ip-mask>` | IP mask | lift a D-line |
 | `CHGHOST <nick> <user> <host>` | one user | change displayed user@host |
 | `WALLOPS :<text>` | all `+w` users | operator broadcast |
-| `REHASH` | server | hot-reload config subset |
+| `REHASH` | server | hot-reload config subset + TLS certificate/key |
+| `CONNECT <name>` | S2S link | bring up a configured peer link at runtime |
+| `SQUIT <server> [:reason]` | S2S link | disconnect a directly-linked peer (and its subtree) |
 
 ### K-lines: banning by mask
 

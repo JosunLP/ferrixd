@@ -22,7 +22,6 @@ use argon2::Argon2;
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tokio::net::TcpListener;
-use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -298,12 +297,15 @@ fn cmd_run(global: &GlobalOpts, color: bool, dev: bool) -> Result<ExitCode> {
 
 async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
     let tls_config = tls::build_server_config(&config.tls).context("configuring TLS")?;
-    let acceptor = TlsAcceptor::from(tls_config);
+    // A hot-swappable holder so `REHASH` can reload the certificate/key without
+    // dropping the process; every TLS listener builds its acceptor from this.
+    let shared_tls = tls::SharedServerTls::new(tls_config);
 
     let server = Server::new(ServerInfo {
         name: config.server.name.clone(),
         sid: config.server.sid.clone(),
         network: config.server.network.clone(),
+        icon: config.server.icon.clone(),
         version: concat!("ferrixd-", env!("CARGO_PKG_VERSION")).to_owned(),
         created: state::format_datetime(state::now_unix()),
         casemapping: config.server.casemapping,
@@ -318,6 +320,8 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
     server
         .apply_config(&config)
         .map_err(|e| anyhow::anyhow!("applying config: {e}"))?;
+    // Hand the server the swappable TLS holder so `REHASH` can reload certs.
+    server.attach_tls(shared_tls.clone());
     info!(
         accounts = server.accounts.len(),
         operators = server.opers.len(),
@@ -387,6 +391,10 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
     // S2S peer links: outbound connectors and an optional listener.
     if !config.links.is_empty() {
         let link_client = tls::build_link_client_config(&config.tls).context("link TLS config")?;
+        // Hand the server the client config so operator `CONNECT` can dial a
+        // configured peer at runtime (the link definitions are already loaded by
+        // `apply_config`).
+        params.server.attach_link_client(link_client.clone());
         for link in &config.links {
             tokio::spawn(crate::link::run_outbound(
                 link.clone(),
@@ -400,14 +408,42 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
             .await
             .with_context(|| format!("binding link listener on {link_addr}"))?;
         let link_server = params.server.clone();
-        let link_acceptor = acceptor.clone();
+        let link_tls = shared_tls.clone();
         let links = config.links.clone();
         tokio::spawn(async move {
             if let Err(err) =
-                crate::link::run_link_listener(link_listener, link_acceptor, link_server, links)
-                    .await
+                crate::link::run_link_listener(link_listener, link_tls, link_server, links).await
             {
                 error!(%err, "S2S link listener exited with error");
+            }
+        });
+    }
+
+    // Optional secure WebSocket (`wss://`) listener — shares the TLS acceptor.
+    if let Some(addr) = config.server.wss_bind {
+        let wss_listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("binding secure WebSocket listener on {addr}"))?;
+        let wss_params = params.clone();
+        let wss_tls = shared_tls.clone();
+        tokio::spawn(async move {
+            if let Err(err) =
+                listener::run_wss(wss_listener, wss_tls, wss_params, handshake_timeout).await
+            {
+                error!(%err, "secure WebSocket listener exited with error");
+            }
+        });
+    }
+
+    // Optional plaintext WebSocket (`ws://`) listener (loopback-only by default).
+    if let Some(addr) = config.server.ws_bind {
+        let ws_listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("binding WebSocket listener on {addr}"))?;
+        let ws_params = params.clone();
+        tokio::spawn(async move {
+            if let Err(err) = listener::run_ws(ws_listener, ws_params, handshake_timeout).await {
+                error!(%err, "WebSocket listener exited with error");
             }
         });
     }
@@ -419,7 +455,7 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
         .with_context(|| format!("binding TLS listener on {tls_addr}"))?;
     let tls_task = tokio::spawn(listener::run_tls(
         tls_listener,
-        acceptor,
+        shared_tls.clone(),
         params.clone(),
         handshake_timeout,
     ));

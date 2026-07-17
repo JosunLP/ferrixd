@@ -191,7 +191,11 @@ pub async fn serve<S>(
                         Metrics::incr(&ctx.server.metrics.commands_total);
                         entry.data.lock().last_active = crate::state::now_unix();
                         session.begin_label(&message);
+                        let label = command::metric_label(&message);
+                        let started = Instant::now();
                         command::dispatch(&mut session, &message);
+                        let micros = started.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                        ctx.server.metrics.commands.observe(label, micros);
                         session.end_label();
                     }
                     Err(err) => debug!(%peer, %err, "ignoring malformed line"),

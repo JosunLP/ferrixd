@@ -159,6 +159,9 @@ pub struct ServerInfo {
     pub sid: String,
     /// Advertised network name (`ISUPPORT NETWORK`).
     pub network: String,
+    /// Optional network icon URL (`draft/network-icon`), advertised as the
+    /// `draft/ICON` ISUPPORT token when set.
+    pub icon: Option<String>,
     /// Version string.
     pub version: String,
     /// Human-readable creation time, captured at startup.
@@ -203,6 +206,8 @@ pub struct RemoteUser {
     pub oper: bool,
     /// Umode `+i` (invisible), synced over S2S.
     pub invisible: bool,
+    /// Umode `+B` (bot-mode), synced over S2S — remote WHOIS shows `RPL_WHOISBOT`.
+    pub bot: bool,
 }
 
 impl RemoteUser {
@@ -223,6 +228,9 @@ pub struct LinkHandle {
     /// The peer's description (from its `SERVER` line).
     pub description: String,
     tx: mpsc::Sender<Bytes>,
+    /// Fired to ask the link's read loop to stop (operator `SQUIT`). Shared with
+    /// the loop, which selects on it alongside the socket.
+    shutdown: Arc<Notify>,
 }
 
 impl LinkHandle {
@@ -234,12 +242,25 @@ impl LinkHandle {
             name,
             description,
             tx,
+            shutdown: Arc::new(Notify::new()),
         }
     }
 
     /// Queue bytes to the peer (best-effort).
     pub fn send(&self, bytes: Bytes) {
         let _ = self.tx.try_send(bytes);
+    }
+
+    /// Ask the link's read loop to stop (local `SQUIT`); the loop then unwinds
+    /// through the usual `drop_link` netsplit path.
+    pub fn request_close(&self) {
+        self.shutdown.notify_one();
+    }
+
+    /// The shutdown signal to select on inside the read loop.
+    #[must_use]
+    pub fn shutdown_signal(&self) -> Arc<Notify> {
+        self.shutdown.clone()
     }
 }
 
@@ -344,6 +365,10 @@ pub struct Server {
     chanreg: OnceLock<ChanRegStore>,
     /// WebAssembly plugin host (attached if configured).
     plugins: OnceLock<crate::plugin::PluginHost>,
+    /// Hot-swappable server-side TLS config, so `REHASH` can reload the
+    /// certificate/key without a restart. Attached at startup when TLS listeners
+    /// are wired up.
+    tls: OnceLock<Arc<crate::tls::SharedServerTls>>,
     /// Monotonic id source for clients.
     next_id: AtomicU64,
     /// Startup time (Unix seconds), for `STATS u`.
@@ -361,17 +386,28 @@ pub struct Server {
     /// epoch milliseconds. Owners are accounts when logged in (so markers sync
     /// across a user's connections), otherwise folded nicks.
     read_markers: DashMap<String, u64>,
+    /// Trusted WEBIRC gateways (swappable by `REHASH`). Empty disables `WEBIRC`.
+    webirc: RwLock<Vec<crate::config::WebircConfig>>,
+    /// Configured S2S link definitions (refreshed by `REHASH`), so operator
+    /// `CONNECT` can look up a peer by name at runtime.
+    link_configs: RwLock<Vec<crate::config::LinkConfig>>,
+    /// TLS client config for operator-initiated outbound links (`CONNECT`).
+    /// Attached at startup when any links are configured.
+    link_client_config: OnceLock<Arc<rustls::ClientConfig>>,
 }
 
-/// The `+o`/`+i` umode string for a user, or `None` when neither is set (so a
+/// The `+o`/`+i`/`+B` umode string for a user, or `None` when none is set (so a
 /// burst does not carry a pointless frame per plain user).
-fn umode_flags(oper: bool, invisible: bool) -> Option<String> {
+fn umode_flags(oper: bool, invisible: bool, bot: bool) -> Option<String> {
     let mut flags = String::new();
     if oper {
         flags.push('o');
     }
     if invisible {
         flags.push('i');
+    }
+    if bot {
+        flags.push('B');
     }
     (!flags.is_empty()).then(|| format!("+{flags}"))
 }
@@ -429,6 +465,7 @@ impl Server {
             registered_channels: DashMap::new(),
             chanreg: OnceLock::new(),
             plugins: OnceLock::new(),
+            tls: OnceLock::new(),
             next_id: AtomicU64::new(1),
             started_at: now_unix(),
             whowas: Mutex::new(VecDeque::new()),
@@ -436,7 +473,32 @@ impl Server {
             shutdown: Notify::new(),
             client_password: RwLock::new(None),
             read_markers: DashMap::new(),
+            webirc: RwLock::new(Vec::new()),
+            link_configs: RwLock::new(Vec::new()),
+            link_client_config: OnceLock::new(),
         })
+    }
+
+    /// Authorise a `WEBIRC` command: the connecting `source_ip` must match one of
+    /// the configured gateway's `hosts` globs AND the `password` must match that
+    /// gateway (constant-time). Returns `true` only when both hold. No gateways
+    /// configured means the `WEBIRC` command is disabled and this is always
+    /// `false`.
+    #[must_use]
+    pub fn webirc_authorize(&self, source_ip: &str, gateway: &str, password: &str) -> bool {
+        use subtle::ConstantTimeEq;
+        let mut ok = false;
+        for gw in self.webirc.read().iter() {
+            // Gate on the source address first, then compare the secret. The
+            // password compare runs in constant time; we deliberately test every
+            // matching gateway (no early return) so timing does not reveal which
+            // gateway name or which host entry matched.
+            let host_ok =
+                gw.name == gateway && gw.hosts.iter().any(|h| crate::mask::matches(h, source_ip));
+            let pass_ok: bool = gw.password.as_bytes().ct_eq(password.as_bytes()).into();
+            ok |= host_ok & pass_ok;
+        }
+        ok
     }
 
     /// Check a client's `PASS` credential against the configured connection
@@ -452,6 +514,11 @@ impl Server {
     /// Set or clear the connection password (config apply / tests).
     pub fn set_client_password(&self, password: Option<String>) {
         *self.client_password.write() = password;
+    }
+
+    /// Replace the trusted WEBIRC gateway set (config apply / tests).
+    pub fn set_webirc_gateways(&self, gateways: Vec<crate::config::WebircConfig>) {
+        *self.webirc.write() = gateways;
     }
 
     /// Seconds since the server started (`STATS u`).
@@ -570,6 +637,69 @@ impl Server {
     #[must_use]
     pub fn plugins(&self) -> Option<&crate::plugin::PluginHost> {
         self.plugins.get().filter(|host| !host.is_empty())
+    }
+
+    /// Attach the hot-swappable TLS configuration (so `REHASH` can reload certs).
+    pub fn attach_tls(&self, tls: Arc<crate::tls::SharedServerTls>) {
+        let _ = self.tls.set(tls);
+    }
+
+    /// The hot-swappable TLS configuration, if TLS listeners are wired up.
+    #[must_use]
+    pub fn tls(&self) -> Option<&Arc<crate::tls::SharedServerTls>> {
+        self.tls.get()
+    }
+
+    /// Attach the TLS client config used for operator-initiated outbound links.
+    pub fn attach_link_client(&self, config: Arc<rustls::ClientConfig>) {
+        let _ = self.link_client_config.set(config);
+    }
+
+    /// The TLS client config for operator `CONNECT`, if links are configured.
+    #[must_use]
+    pub fn link_client_config(&self) -> Option<Arc<rustls::ClientConfig>> {
+        self.link_client_config.get().cloned()
+    }
+
+    /// A configured link definition matching `name` (case-insensitive), for
+    /// operator `CONNECT`.
+    #[must_use]
+    pub fn link_config_by_name(&self, name: &str) -> Option<crate::config::LinkConfig> {
+        self.link_configs
+            .read()
+            .iter()
+            .find(|l| l.name.eq_ignore_ascii_case(name))
+            .cloned()
+    }
+
+    /// Resolve `target` (a SID or a server name, case-insensitive) to a directly
+    /// linked peer's handle.
+    #[must_use]
+    pub fn direct_link(&self, target: &str) -> Option<LinkHandle> {
+        if let Some(handle) = self.links.get(target) {
+            return Some(handle.clone());
+        }
+        self.links
+            .iter()
+            .find(|handle| handle.name.eq_ignore_ascii_case(target))
+            .map(|handle| handle.clone())
+    }
+
+    /// Operator `SQUIT`: tear down the directly-linked peer named (or SID'd) by
+    /// `target`. Notifies the peer, then asks the local read loop to unwind
+    /// (which runs the usual [`Server::drop_link`] netsplit). Returns the peer's
+    /// server name if a matching direct link existed.
+    pub fn squit_link(&self, target: &str, reason: &str) -> Option<String> {
+        let handle = self.direct_link(target)?;
+        // Tell the peer we are dropping it (it sees this as an SQUIT for our SID
+        // and unwinds its own side), then stop our read loop locally.
+        let squit = crate::s2s::LinkMessage::Squit {
+            sid: self.info.sid.clone(),
+            reason: reason.to_owned(),
+        };
+        handle.send(squit.to_line());
+        handle.request_close();
+        Some(handle.name.clone())
     }
 
     /// The S2S UID for a local client (this server's SID + the client id).
@@ -1274,7 +1404,7 @@ impl Server {
                     .to_line(),
                 );
             }
-            if let Some(flags) = umode_flags(d.oper, d.invisible) {
+            if let Some(flags) = umode_flags(d.oper, d.invisible, d.bot) {
                 link.send(LinkMessage::Sumode { uid, flags }.to_line());
             }
         }
@@ -1306,7 +1436,7 @@ impl Server {
                     .to_line(),
                 );
             }
-            if let Some(flags) = umode_flags(user.oper, user.invisible) {
+            if let Some(flags) = umode_flags(user.oper, user.invisible, user.bot) {
                 link.send(
                     LinkMessage::Sumode {
                         uid: user.uid.clone(),
@@ -1429,7 +1559,7 @@ impl Server {
             account: d.account.clone().unwrap_or_else(|| "*".to_owned()),
             realname: d.realname.clone(),
         };
-        let umodes = umode_flags(d.oper, d.invisible);
+        let umodes = umode_flags(d.oper, d.invisible, d.bot);
         drop(d);
         self.propagate_to_links(&msg.to_line());
         // Umodes travel separately (UID's shape is fixed), so a user that is
@@ -1668,7 +1798,14 @@ impl Server {
             .clone()
             .ok_or_else(|| "no config path recorded".to_owned())?;
         let config = Config::load(&path).map_err(|e| e.to_string())?;
-        self.apply_config(&config)
+        self.apply_config(&config)?;
+        // Reload the TLS certificate/key without dropping the process. A failure
+        // here leaves the previous config armed (see `SharedServerTls::reload`).
+        if let Some(tls) = self.tls.get() {
+            tls.reload(&config.tls)
+                .map_err(|e| format!("reloading TLS material: {e}"))?;
+        }
+        Ok(())
     }
 
     /// Apply the auth/MOTD portions of `config` (used at startup and by `REHASH`).
@@ -1730,6 +1867,8 @@ impl Server {
 
         *self.motd.write() = config.server.motd.clone();
         self.set_client_password(config.server.password.clone());
+        *self.webirc.write() = config.webirc.clone();
+        *self.link_configs.write() = config.links.clone();
 
         // Self-registered accounts survive a REHASH: re-apply the persisted set
         // on top of the config seed (config-defined names win on collision).
@@ -2606,6 +2745,7 @@ impl Server {
                 '-' => adding = false,
                 'o' => user.oper = adding,
                 'i' => user.invisible = adding,
+                'B' => user.bot = adding,
                 _ => {} // `+w` and friends are a local delivery choice
             }
         }
@@ -3904,6 +4044,9 @@ pub struct ClientData {
     pub invisible: bool,
     /// Umode `+w`: receives server WALLOPS.
     pub wallops: bool,
+    /// Umode `+B` (IRCv3 bot-mode): marks the user as a bot. Reported in WHOIS
+    /// (`RPL_WHOISBOT`), WHO flags, and as a bare `@bot` message tag.
+    pub bot: bool,
     /// Folded nicks this client is monitoring (MONITOR); mirrored in the
     /// server-wide `monitors` reverse index.
     pub monitor: HashSet<String>,
@@ -3938,6 +4081,7 @@ impl ClientData {
             secure: false,
             invisible: false,
             wallops: false,
+            bot: false,
             monitor: HashSet::new(),
             metadata: HashMap::new(),
             metadata_subs: HashSet::new(),
@@ -4435,6 +4579,7 @@ mod tests {
             name: "irc.a".to_owned(),
             sid: "1AA".to_owned(),
             network: "n".to_owned(),
+            icon: None,
             version: "v".to_owned(),
             created: "c".to_owned(),
             casemapping: crate::casemap::CaseMapping::Ascii,
@@ -4459,6 +4604,7 @@ mod tests {
             away: None,
             oper: false,
             invisible: false,
+            bot: false,
         }
     }
 
@@ -4491,6 +4637,29 @@ mod tests {
             LinkHandle::new(sid.to_owned(), name.to_owned(), "d".to_owned(), tx),
             rx,
         )
+    }
+
+    #[test]
+    fn squit_resolves_by_sid_or_name_and_notifies_peer() {
+        let server = test_server();
+        let (b, mut b_rx) = link_handle("2BB", "irc.b");
+        server.try_register_link(b).expect("link registers");
+
+        // Resolvable by SID and by name (case-insensitive); unknown names miss.
+        assert!(server.direct_link("2BB").is_some());
+        assert!(server.direct_link("IRC.B").is_some());
+        assert!(server.direct_link("irc.nope").is_none());
+
+        // SQUIT by name returns the peer name and queues an SQUIT to the peer.
+        let name = server.squit_link("irc.b", "bye now");
+        assert_eq!(name.as_deref(), Some("irc.b"));
+        let frame = b_rx.try_recv().expect("peer should receive an SQUIT frame");
+        let text = String::from_utf8_lossy(&frame);
+        assert!(text.contains("SQUIT"), "not an SQUIT: {text}");
+        assert!(text.contains("bye now"), "reason missing: {text}");
+
+        // SQUIT of an unknown server reports nothing to tear down.
+        assert!(server.squit_link("irc.nope", "x").is_none());
     }
 
     #[test]

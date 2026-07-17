@@ -43,6 +43,9 @@ pub enum Cap {
     EventPlayback,
     MessageRedaction,
     ChannelRename,
+    NoImplicitNames,
+    PreAway,
+    ExtendedIsupport,
 }
 
 impl Cap {
@@ -74,6 +77,9 @@ impl Cap {
         Cap::EventPlayback,
         Cap::MessageRedaction,
         Cap::ChannelRename,
+        Cap::NoImplicitNames,
+        Cap::PreAway,
+        Cap::ExtendedIsupport,
     ];
 
     /// This capability's bit in a [`CapSet`].
@@ -112,6 +118,9 @@ impl Cap {
             Cap::EventPlayback => "draft/event-playback",
             Cap::MessageRedaction => "draft/message-redaction",
             Cap::ChannelRename => "draft/channel-rename",
+            Cap::NoImplicitNames => "no-implicit-names",
+            Cap::PreAway => "draft/pre-away",
+            Cap::ExtendedIsupport => "draft/extended-isupport",
         }
     }
 

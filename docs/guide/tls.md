@@ -35,13 +35,19 @@ Two operational notes:
 1. **Permissions.** ferrixd should run as an unprivileged user; make sure
    that user can read the key (a deploy hook that copies the pair into
    `/etc/ferrixd/` with tight ownership is the usual pattern).
-2. **Renewal requires a restart.** Certificates are loaded at startup and
-   `REHASH` does **not** reload TLS material. Add a
-   `systemctl restart ferrixd` to your certbot deploy hook. Clients
-   reconnect automatically; with `[persistence]` enabled, history and
-   registrations are unaffected.
+2. **Renewal is hot — no restart.** `REHASH` reloads the certificate and
+   key for every TLS listener (client, `wss://`, and the S2S link
+   listener) without dropping the process or any live connection: only
+   handshakes started after the reload use the new material. Point your
+   certbot deploy hook at a `REHASH` (e.g. send the operator command, or
+   trigger it however you drive the server) instead of a full restart. If
+   the new PEM is unreadable or malformed the reload fails and the
+   **previous** certificate stays armed, so a botched renewal never leaves
+   the listener without a certificate. Existing outbound links keep the
+   certificate they handshook with until they reconnect (`SQUIT` +
+   `CONNECT` forces that).
 
-After changing anything, validate before restarting:
+Validate before reloading:
 
 ```sh
 ferrixd check
@@ -116,6 +122,24 @@ debugging tool. It is restricted to loopback: a non-loopback `plain_bind`
 fails validation unless you also set `allow_plain_nonlocal = true`, which
 exists for one legitimate case — terminating TLS in a trusted local proxy.
 If that's not you, don't set it.
+
+## WebSocket transport (`ws://` / `wss://`)
+
+Browser clients speak IRC over WebSockets. ferrixd serves them natively — no
+gateway process:
+
+```toml
+[server]
+wss_bind = "0.0.0.0:443"   # secure: terminates TLS with the [tls] cert below
+ws_bind  = "127.0.0.1:8080" # plaintext: loopback-only unless allow_plain_nonlocal
+```
+
+`wss_bind` uses the same certificate as `tls_bind` (and picks up a
+`REHASH`-triggered certificate swap the same way). Each IRC line is one
+WebSocket message with no trailing CRLF; the server negotiates the
+`text.ircv3.net` and `binary.ircv3.net` subprotocols. `ws_bind` is plaintext
+and, like `plain_bind`, is loopback-only unless `allow_plain_nonlocal = true` —
+prefer `wss_bind` for anything a browser reaches over the network.
 
 ## Timeouts
 

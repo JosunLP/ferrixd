@@ -8,7 +8,7 @@ members = ["crates/ferrix-protocol", "crates/ferrixd"]
 exclude = ["fuzz", "loadtest"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
@@ -59,6 +59,7 @@ parking_lot = "0.12"
 argon2 = "0.5"
 subtle = "2"
 base64 = "0.22"
+sha1 = "0.10"
 sha2 = "0.11"
 hmac = "0.13"
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
@@ -90,7 +91,7 @@ thiserror = "2"
 anyhow = "1"
 
 # --- internal ---
-ferrix-protocol = { path = "crates/ferrix-protocol", version = "1.0.0" }
+ferrix-protocol = { path = "crates/ferrix-protocol", version = "1.1.0" }
 
 [profile.release]
 opt-level = 3

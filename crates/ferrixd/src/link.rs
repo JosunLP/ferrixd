@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_rustls::TlsConnector;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info, warn};
 
@@ -35,6 +35,25 @@ use crate::wire::Line;
 const LINK_MAX_LINE: usize = 16_384;
 const RECONNECT_DELAY: Duration = Duration::from_secs(30);
 const LINK_SENDQ: usize = 4096;
+
+/// Attempt a single outbound link to `peer` (operator `CONNECT`). Unlike
+/// [`run_outbound`], it makes exactly one attempt and returns its result rather
+/// than looping — so a manual `CONNECT` does not spawn a competing reconnect
+/// loop alongside any config-driven one.
+///
+/// # Errors
+///
+/// Returns an error if the peer has no connect address or the attempt fails.
+pub async fn connect_now(
+    peer: LinkConfig,
+    server: Arc<Server>,
+    client_config: Arc<rustls::ClientConfig>,
+) -> Result<()> {
+    let Some(addr) = peer.connect else {
+        bail!("link {} has no connect address (accept-only)", peer.name);
+    };
+    connect_once(&peer, addr, &server, &client_config).await
+}
 
 /// Keep an outbound link to `peer` up, reconnecting on failure.
 pub async fn run_outbound(
@@ -88,9 +107,11 @@ async fn connect_once(
 }
 
 /// Accept inbound links, matching each by its client-certificate fingerprint.
+/// The acceptor is rebuilt per connection from `tls`, so a `REHASH` certificate
+/// swap applies to new links too.
 pub async fn run_link_listener(
     listener: TcpListener,
-    acceptor: TlsAcceptor,
+    tls: Arc<crate::tls::SharedServerTls>,
     server: Arc<Server>,
     links: Vec<LinkConfig>,
 ) -> Result<()> {
@@ -107,7 +128,7 @@ pub async fn run_link_listener(
                 continue;
             }
         };
-        let acceptor = acceptor.clone();
+        let acceptor = tls.acceptor();
         let server = server.clone();
         let links = links.clone();
         tokio::spawn(async move {
@@ -220,26 +241,40 @@ where
     info!(peer = %name, sid = %sid, "S2S link established");
 
     // Full-duplex: a writer task drains the mailbox; announce + burst; read loop.
+    let shutdown = handle.shutdown_signal();
     tokio::spawn(link_writer(writer, rx));
     server.announce_link_to_others(&handle);
     server.burst_to_peer(&sid);
 
-    let result = read_loop(&mut reader, &sid, server).await;
+    let result = read_loop(&mut reader, &sid, server, &shutdown).await;
     server.drop_link(&sid);
     info!(peer = %name, "S2S link down");
     result
 }
 
-/// Apply inbound link messages to network state until the link closes.
+/// Apply inbound link messages to network state until the link closes or a local
+/// `SQUIT` fires `shutdown`.
 async fn read_loop<R>(
     reader: &mut FramedRead<R, IrcCodec>,
     peer_sid: &str,
     server: &Arc<Server>,
+    shutdown: &tokio::sync::Notify,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
-    while let Some(frame) = reader.next().await {
+    loop {
+        let frame = tokio::select! {
+            biased;
+            () = shutdown.notified() => {
+                info!(%peer_sid, "link closed by local SQUIT");
+                return Ok(());
+            }
+            frame = reader.next() => frame,
+        };
+        let Some(frame) = frame else {
+            return Ok(());
+        };
         let frame = frame?;
         let Ok(parsed) = Message::parse(&frame) else {
             continue;
@@ -282,6 +317,7 @@ where
                     away: None,
                     oper: false,
                     invisible: false,
+                    bot: false,
                 }) {
                     Some(kill) => {
                         // The incoming user lost a collision: reject it at its
@@ -813,7 +849,8 @@ where
         .to_line(),
     );
 
-    let result = ts6_read_loop(&mut reader, &sid, server, &ctx).await;
+    let shutdown = handle.shutdown_signal();
+    let result = ts6_read_loop(&mut reader, &sid, server, &ctx, &shutdown).await;
     server.drop_link(&sid);
     info!(peer = %name, "TS6 link down");
     result
@@ -860,11 +897,23 @@ async fn ts6_read_loop<R>(
     peer_sid: &str,
     server: &Arc<Server>,
     ctx: &Ts6Ctx,
+    shutdown: &tokio::sync::Notify,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
-    while let Some(frame) = reader.next().await {
+    loop {
+        let frame = tokio::select! {
+            biased;
+            () = shutdown.notified() => {
+                info!(%peer_sid, "TS6 link closed by local SQUIT");
+                return Ok(());
+            }
+            frame = reader.next() => frame,
+        };
+        let Some(frame) = frame else {
+            return Ok(());
+        };
         let frame = frame?;
         let Ok(parsed) = Message::parse(&frame) else {
             continue;
@@ -941,6 +990,7 @@ where
                     away: None,
                     oper: false,
                     invisible: false,
+                    bot: false,
                 }) {
                     Some(kill) => {
                         server.send_to_link(peer_sid, kill.to_line());
@@ -1335,6 +1385,7 @@ mod tests {
             name: "irc.a".to_owned(),
             sid: "1AA".to_owned(),
             network: "n".to_owned(),
+            icon: None,
             version: "v".to_owned(),
             created: "c".to_owned(),
             casemapping: CaseMapping::Ascii,
@@ -1450,7 +1501,9 @@ mod tests {
         drop(peer); // EOF ends the read loop
 
         let mut reader = FramedRead::new(srv, IrcCodec::new(LINK_MAX_LINE));
-        read_loop(&mut reader, "2BB", &server).await.unwrap();
+        read_loop(&mut reader, "2BB", &server, &tokio::sync::Notify::new())
+            .await
+            .unwrap();
 
         let seen = drain(&mut alice_rx);
         // Authorized state was applied.
@@ -1557,7 +1610,9 @@ mod tests {
         drop(peer);
 
         let mut reader = FramedRead::new(srv, IrcCodec::new(LINK_MAX_LINE));
-        read_loop(&mut reader, "2BB", &server).await.unwrap();
+        read_loop(&mut reader, "2BB", &server, &tokio::sync::Notify::new())
+            .await
+            .unwrap();
 
         // Applied locally.
         let seen = drain(&mut alice_rx);
@@ -1635,7 +1690,9 @@ mod tests {
         drop(peer);
 
         let mut reader = FramedRead::new(srv, IrcCodec::new(LINK_MAX_LINE));
-        read_loop(&mut reader, "2BB", &server).await.unwrap();
+        read_loop(&mut reader, "2BB", &server, &tokio::sync::Notify::new())
+            .await
+            .unwrap();
 
         let mut sent = String::new();
         while let Ok(bytes) = b_rx.try_recv() {
@@ -1719,9 +1776,15 @@ mod tests {
             caps: Arc::new(HashSet::new()),
         };
         let mut reader = FramedRead::new(srv, IrcCodec::new(LINK_MAX_LINE));
-        ts6_read_loop(&mut reader, "42X", &server, &ctx)
-            .await
-            .unwrap();
+        ts6_read_loop(
+            &mut reader,
+            "42X",
+            &server,
+            &ctx,
+            &tokio::sync::Notify::new(),
+        )
+        .await
+        .unwrap();
 
         // Applied locally: alice saw the join, message, mode, and topic.
         let seen = drain(&mut alice_rx);

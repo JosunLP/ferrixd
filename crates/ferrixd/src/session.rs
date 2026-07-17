@@ -32,6 +32,9 @@ pub struct Session {
     pub pass: Option<String>,
     /// Whether a `USER` command has been accepted.
     pub has_user: bool,
+    /// Whether a trusted `WEBIRC` gateway has rewritten this connection's
+    /// apparent host/IP (so a second `WEBIRC` is refused).
+    pub webirc_applied: bool,
     /// Whether the client is mid `CAP` negotiation (delays registration).
     pub cap_negotiating: bool,
     /// `CAP LS` version the client requested (302 for modern clients).
@@ -40,6 +43,9 @@ pub struct Session {
     pub sasl: SaslSession,
     /// Whether registration has completed.
     pub registered: bool,
+    /// Whether `RPL_ISUPPORT` has already been sent (draft/extended-isupport
+    /// sends it during CAP negotiation; the registration burst then skips it).
+    pub isupport_sent: bool,
     /// Set by a handler to end the connection with this quit reason.
     pub quit: Option<String>,
     /// An in-progress inbound `draft/multiline` batch, if any.
@@ -86,10 +92,12 @@ impl Session {
             cert_fp,
             pass: None,
             has_user: false,
+            webirc_applied: false,
             cap_negotiating: false,
             cap_version: 0,
             sasl: SaslSession::default(),
             registered: false,
+            isupport_sent: false,
             quit: None,
             multiline: None,
             label: RefCell::new(None),
@@ -438,10 +446,15 @@ impl Session {
         let chanmodes = format!("{}kl", state::bool_mode_letters());
         self.numeric(
             RPL_MYINFO,
-            &[&info.name, &info.version, "iow", &chanmodes],
+            &[&info.name, &info.version, "iowB", &chanmodes],
             None,
         );
-        self.send_isupport();
+        // draft/extended-isupport may have already sent this during CAP
+        // negotiation; the spec lets the registration burst skip it then.
+        if !self.isupport_sent {
+            self.send_isupport();
+            self.isupport_sent = true;
+        }
         self.send_lusers();
         self.send_motd();
 
@@ -461,7 +474,7 @@ impl Session {
         // CHANMODES type groups: A=list (b,e,I), B=always-param (k), C=param-when-set
         // (l), D=boolean (derived from the single BOOL_MODES table).
         let chanmodes = format!("CHANMODES=beI,k,l,{}", state::bool_mode_letters());
-        let tokens: Vec<String> = vec![
+        let mut tokens: Vec<String> = vec![
             "CHANTYPES=#".to_owned(),
             chanmodes,
             "PREFIX=(ov)@+".to_owned(),
@@ -490,9 +503,14 @@ impl Session {
             "KNOCK".to_owned(),
             "STATUSMSG=@+".to_owned(),
             "UTF8ONLY".to_owned(),
+            format!("BOT={}", crate::command::BOT_UMODE),
             format!("CASEMAPPING={}", info.casemapping.isupport_token()),
             format!("NETWORK={}", info.network),
         ];
+        // draft/network-icon: advertise the network's icon URL when configured.
+        if let Some(icon) = &info.icon {
+            tokens.push(format!("draft/ICON={icon}"));
+        }
         for chunk in tokens.chunks(13) {
             let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
             self.numeric(RPL_ISUPPORT, &refs, Some("are supported by this server"));

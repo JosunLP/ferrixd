@@ -57,6 +57,7 @@ querying without a parameter returns the list (`367/368`, `348/349`,
 | --- | --- | --- |
 | `i` | user | invisible (hidden from `WHO`/`NAMES` scans by non-common-channel users) |
 | `w` | user | receives `WALLOPS` |
+| `B` | user | bot (IRCv3 bot-mode): shown in `WHOIS` (`RPL_WHOISBOT`, 335) and `WHO` flags, and tags the bot's messages with a bare `@bot` — advertised as `BOT=B` |
 | `o` | server | IRC operator — granted only by `OPER`; a user may remove it (`-o`) but never set it |
 
 ## ISUPPORT (005) tokens
@@ -91,6 +92,8 @@ What ferrixd advertises at registration, and what each token promises:
 | `KNOCK` | — | `KNOCK` on invite-only channels supported |
 | `STATUSMSG` | `@+` | `PRIVMSG @#chan` / `+#chan` reach only prefixed members |
 | `UTF8ONLY` | — | the server expects UTF-8 |
+| `BOT` | `B` | user mode letter that marks a bot (IRCv3 bot-mode) |
+| `draft/ICON` | from config | network icon URL, when `server.icon` is set (IRCv3 `draft/network-icon`) |
 
 ::: info Advertised vs. enforced
 `TOPICLEN`, `KICKLEN`, and `AWAYLEN` are advisory values for clients; the

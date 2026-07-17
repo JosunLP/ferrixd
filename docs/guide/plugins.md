@@ -32,6 +32,8 @@ to load is logged and skipped; the server still starts.
 | --- | --- | --- |
 | `ferrix_on_message` / `_v2` | every channel `PRIVMSG`/`NOTICE` | message blocked |
 | `ferrix_on_join` | every channel join attempt | join rejected |
+| `ferrix_on_nick` | a registered client's nick change | nick change rejected |
+| `ferrix_on_topic` | a `TOPIC` that sets a new topic | topic change rejected |
 
 Hooks run for **local and federated traffic alike**, so policy is uniform
 for everything this node delivers. A blocked message is not delivered and
@@ -113,6 +115,14 @@ Any language that compiles to WASM works the same way — export `memory`,
 
 `ferrix_on_join(ptr, len)` receives `{"nick":"…","channel":"…"}` and
 non-zero rejects the join (the user gets `FAIL JOIN JOIN_BLOCKED`).
+
+`ferrix_on_nick(ptr, len)` receives `{"old":"…","new":"…"}` for a
+registered client's nick change; non-zero keeps the old nick (the user
+gets `432 ERR_ERRONEUSNICKNAME`). `ferrix_on_topic(ptr, len)` receives
+`{"nick":"…","channel":"…","topic":"…"}` when a `TOPIC` sets a new topic
+(after the channel's own permission checks); non-zero rejects it (the user
+gets `FAIL TOPIC TOPIC_BLOCKED`). Both are optional exports, so existing
+plugins keep working unchanged.
 
 ## Choosing a fuel budget
 
