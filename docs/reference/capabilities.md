@@ -90,4 +90,4 @@ Draft capabilities (`draft/` prefix) track their specifications; when a
 draft is ratified, ferrixd will advertise the ratified name (and, per
 `cap-notify`, connected clients learn about it live). Clients that
 negotiate nothing get a well-behaved RFC 1459 server — every modern
-behavior is opt-in via CAP.
+capability-negotiated behavior is opt-in via CAP.

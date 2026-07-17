@@ -37,7 +37,8 @@ Two operational notes:
    `/etc/ferrixd/` with tight ownership is the usual pattern).
 2. **Renewal is hot — no restart.** `REHASH` reloads the certificate and
    key for every TLS listener (client, `wss://`, and the S2S link
-   listener) without dropping the process or any live connection: only
+   listener) and refreshes the TLS client configuration for operator-initiated
+   outbound links, without dropping the process or any live connection: only
    handshakes started after the reload use the new material. Point your
    certbot deploy hook at a `REHASH` (e.g. send the operator command, or
    trigger it however you drive the server) instead of a full restart. If
@@ -130,7 +131,7 @@ gateway process:
 
 ```toml
 [server]
-wss_bind = "0.0.0.0:443"   # secure: terminates TLS with the [tls] cert below
+wss_bind = "0.0.0.0:8443"  # secure: terminates TLS with the [tls] cert below
 ws_bind  = "127.0.0.1:8080" # plaintext: loopback-only unless allow_plain_nonlocal
 ```
 

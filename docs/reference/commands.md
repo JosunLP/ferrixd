@@ -28,7 +28,7 @@ Legend: **○** available pre-registration · **⚙** requires IRC operator ·
 | `NOTICE <target> :<text>` | | as PRIVMSG, but never generates automatic replies |
 | `TAGMSG <target>` | | client-tags-only message (reactions, typing indicators) — requires `message-tags` |
 | `BATCH +<ref> <type>` … `BATCH -<ref>` | | client-initiated batches; `draft/multiline` batches are accepted (≤ 100 lines) |
-| `AWAY [:<reason>]` | | set/clear away state (`away-notify` broadcasts to common channels; propagated over S2S); with `draft/pre-away`, accepted before registration completes |
+| `AWAY [:<reason>]` | ○ | set/clear away state (`away-notify` broadcasts to common channels; propagated over S2S); with `draft/pre-away`, accepted before registration completes |
 | `SETNAME :<realname>` | | change realname live (`setname` cap; propagated over S2S) |
 
 STATUSMSG: `PRIVMSG`/`NOTICE` to `@#chan` or `+#chan` deliver only to

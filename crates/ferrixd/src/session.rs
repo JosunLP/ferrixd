@@ -48,6 +48,9 @@ pub struct Session {
     pub isupport_sent: bool,
     /// Set by a handler to end the connection with this quit reason.
     pub quit: Option<String>,
+    /// Whether the first substantive command (anything but PING/PONG/unknown)
+    /// has been received, used to enforce the WEBIRC first-command contract.
+    pub first_command_received: bool,
     /// An in-progress inbound `draft/multiline` batch, if any.
     pub multiline: Option<MultilineBatch>,
     /// When a labeled command is in progress, its label and a buffer capturing
@@ -99,6 +102,7 @@ impl Session {
             registered: false,
             isupport_sent: false,
             quit: None,
+            first_command_received: false,
             multiline: None,
             label: RefCell::new(None),
             label_buffer: RefCell::new(None),

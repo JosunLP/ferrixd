@@ -503,6 +503,11 @@ where
             if this.read_eof {
                 return Poll::Ready(Ok(())); // 0 bytes filled → EOF
             }
+            // Best-effort drain of queued control frames (PONG, CLOSE) to prevent
+            // unbounded growth if a client sends only PING frames.
+            if !this.tx_raw.is_empty() {
+                let _ = this.poll_drain(cx);
+            }
             match this.take_frame() {
                 FrameStatus::Frame(fin, opcode, payload) => {
                     match this.handle_frame(fin, opcode, payload) {

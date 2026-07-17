@@ -102,14 +102,16 @@ You don't have to restart to touch a link once the server is running:
 
 - **`CONNECT <name>`** dials a configured peer immediately (one attempt).
   Use it to bring up a link you just added — `REHASH` first so the new
-  `[[links]]` block is loaded, then `CONNECT <name>`.
+  `[[links]]` block is loaded and the TLS client configuration is refreshed,
+  then `CONNECT <name>`.
 - **`SQUIT <server> [:reason]`** disconnects a directly-linked peer, by
   server name or SID. The peer and everything reachable through it split
   off through the normal netsplit path.
 
 Both are operator commands (`481 ERR_NOPRIVILEGES` without the flag;
 `402 ERR_NOSUCHSERVER` for an unknown name). `REHASH` refreshes the stored
-`[[links]]` definitions (so `CONNECT` sees edits) but does not itself
+`[[links]]` definitions and rebuilds the TLS client configuration, so
+`CONNECT` sees edits and uses updated certificates. `REHASH` does not itself
 start or stop the boot-time auto-dial loops — use `CONNECT`/`SQUIT` for
 that.
 

@@ -480,9 +480,14 @@ async fn sasl_reauthenticate_failure_keeps_existing_login() {
     c.send("WHOIS alice").await;
     let whois = c.expect("End of /WHOIS").await;
     assert!(whois.contains("330"), "no RPL_WHOISACCOUNT: {whois}");
+    // Validate the account parameter in the 330 reply line (not just presence of "alice").
+    let account_line = whois
+        .lines()
+        .find(|line| line.contains(" 330 "))
+        .expect("330 line missing");
     assert!(
-        whois.contains("alice"),
-        "failed reauth dropped the original login: {whois}"
+        account_line.ends_with(" alice :is logged in as"),
+        "account parameter is not alice: {account_line}"
     );
 }
 
@@ -2164,7 +2169,13 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WsTestClient<S> {
         let mut resp = Vec::new();
         let mut byte = [0u8; 1];
         loop {
-            let n = io.read(&mut byte).await.unwrap();
+            let n = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                io.read(&mut byte),
+            )
+            .await
+            .expect("WebSocket handshake timed out")
+            .unwrap();
             assert!(n == 1, "EOF during handshake response");
             resp.push(byte[0]);
             if resp.ends_with(b"\r\n\r\n") {

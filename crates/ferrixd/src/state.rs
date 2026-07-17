@@ -392,8 +392,8 @@ pub struct Server {
     /// `CONNECT` can look up a peer by name at runtime.
     link_configs: RwLock<Vec<crate::config::LinkConfig>>,
     /// TLS client config for operator-initiated outbound links (`CONNECT`).
-    /// Attached at startup when any links are configured.
-    link_client_config: OnceLock<Arc<rustls::ClientConfig>>,
+    /// Reloaded during REHASH when links are configured; None when no links exist.
+    link_client_config: RwLock<Option<Arc<rustls::ClientConfig>>>,
 }
 
 /// The `+o`/`+i`/`+B` umode string for a user, or `None` when none is set (so a
@@ -475,7 +475,7 @@ impl Server {
             read_markers: DashMap::new(),
             webirc: RwLock::new(Vec::new()),
             link_configs: RwLock::new(Vec::new()),
-            link_client_config: OnceLock::new(),
+            link_client_config: RwLock::new(None),
         })
     }
 
@@ -650,15 +650,15 @@ impl Server {
         self.tls.get()
     }
 
-    /// Attach the TLS client config used for operator-initiated outbound links.
+    /// Set the TLS client config used for operator-initiated outbound links.
     pub fn attach_link_client(&self, config: Arc<rustls::ClientConfig>) {
-        let _ = self.link_client_config.set(config);
+        *self.link_client_config.write() = Some(config);
     }
 
     /// The TLS client config for operator `CONNECT`, if links are configured.
     #[must_use]
     pub fn link_client_config(&self) -> Option<Arc<rustls::ClientConfig>> {
-        self.link_client_config.get().cloned()
+        self.link_client_config.read().clone()
     }
 
     /// A configured link definition matching `name` (case-insensitive), for
@@ -1600,10 +1600,9 @@ impl Server {
         let folded_target = self.fold(target);
         let source_nick = source.split('!').next().unwrap_or(source);
         if let Some(client) = self.find_client(&folded_target) {
-            let account = self
-                .remote_users
-                .get(&self.fold(source_nick))
-                .and_then(|u| u.account.clone());
+            let remote_user = self.remote_users.get(&self.fold(source_nick));
+            let account = remote_user.as_ref().and_then(|u| u.account.clone());
+            let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
             // Keep the origin's msgid/time when the wire carried them, so the
             // message is identical on every server (cross-server msgid refs).
             let msgid = msgid.unwrap_or_else(|| self.history.next_msgid());
@@ -1630,7 +1629,8 @@ impl Server {
             let mut event = crate::deliver::Event::new(body)
                 .with_time(format_server_time(now_ms))
                 .with_account(account)
-                .with_msgid(msgid);
+                .with_msgid(msgid)
+                .with_bot(bot);
             if let Some(tags) = tags {
                 event = event.with_client_tags(tags);
             }
@@ -1660,10 +1660,9 @@ impl Server {
     /// the route to a remote user's server.
     pub fn deliver_tagmsg(&self, origin_sid: &str, source: &str, target: &str, tags: &str) {
         let source_nick = source.split('!').next().unwrap_or(source);
-        let account = self
-            .remote_users
-            .get(&self.fold(source_nick))
-            .and_then(|u| u.account.clone());
+        let remote_user = self.remote_users.get(&self.fold(source_nick));
+        let account = remote_user.as_ref().and_then(|u| u.account.clone());
+        let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
         if crate::casemap::is_valid_channel(target) {
             let folded = self.fold(target);
             let Some(channel) = self.find_channel(&folded) else {
@@ -1673,7 +1672,8 @@ impl Server {
             let event = crate::deliver::Event::new(format!(":{source} TAGMSG {display}"))
                 .with_client_tags(tags.to_owned())
                 .with_time(format_server_time(now_millis()))
-                .with_account(account);
+                .with_account(account)
+                .with_bot(bot);
             crate::deliver::to_channel_capped(&channel, &event, crate::cap::Cap::MessageTags, None);
             self.relay_tagmsg(source, &display, tags, Some(origin_sid));
         } else if let Some(client) = self.find_client(&self.fold(target)) {
@@ -1682,7 +1682,8 @@ impl Server {
                     crate::deliver::Event::new(format!(":{source} TAGMSG {}", client.nick()))
                         .with_client_tags(tags.to_owned())
                         .with_time(format_server_time(now_millis()))
-                        .with_account(account);
+                        .with_account(account)
+                        .with_bot(bot);
                 crate::deliver::to_client(&client, &event);
             }
         } else if let Some(remote) = self.find_remote_user(&self.fold(target)) {
@@ -1798,13 +1799,27 @@ impl Server {
             .clone()
             .ok_or_else(|| "no config path recorded".to_owned())?;
         let config = Config::load(&path).map_err(|e| e.to_string())?;
-        self.apply_config(&config)?;
-        // Reload the TLS certificate/key without dropping the process. A failure
-        // here leaves the previous config armed (see `SharedServerTls::reload`).
+
+        // Validate TLS material first before committing any configuration changes,
+        // so a TLS reload failure leaves the prior configuration entirely unchanged.
         if let Some(tls) = self.tls.get() {
             tls.reload(&config.tls)
                 .map_err(|e| format!("reloading TLS material: {e}"))?;
         }
+
+        // Rebuild link client TLS config if outbound links are configured.
+        let link_client = if !config.links.is_empty() {
+            Some(
+                crate::tls::build_link_client_config(&config.tls)
+                    .map_err(|e| format!("building link client TLS: {e}"))?,
+            )
+        } else {
+            None
+        };
+
+        // Only after all validation succeeds, commit the configuration.
+        self.apply_config(&config)?;
+        *self.link_client_config.write() = link_client;
         Ok(())
     }
 
@@ -3685,10 +3700,9 @@ impl Server {
             }
         }
         let display = channel.data.lock().name.clone();
-        let account = self
-            .remote_users
-            .get(&self.fold(source_nick))
-            .and_then(|u| u.account.clone());
+        let remote_user = self.remote_users.get(&self.fold(source_nick));
+        let account = remote_user.as_ref().and_then(|u| u.account.clone());
+        let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
         // Keep the origin's msgid/time when the wire carried them, so the
         // message is identical on every server (cross-server msgid refs).
         let msgid = msgid.unwrap_or_else(|| self.history.next_msgid());
@@ -3725,7 +3739,8 @@ impl Server {
         let mut event = crate::deliver::Event::new(body)
             .with_time(format_server_time(now_ms))
             .with_account(account)
-            .with_msgid(msgid.clone());
+            .with_msgid(msgid.clone())
+            .with_bot(bot);
         if let Some(tags) = tags.clone() {
             event = event.with_client_tags(tags);
         }

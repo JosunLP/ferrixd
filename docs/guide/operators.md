@@ -128,9 +128,9 @@ dropping connections**, and answers `382 RPL_REHASHING`. What it reloads:
 | Reloaded | Not reloaded (restart required) |
 | --- | --- |
 | `[[accounts]]` | listeners (`tls_bind`, `plain_bind`, `link_bind`) |
-| `[[operators]]` | `[tls]` certificates |
-| `[[bans]]` (K-lines) | `[limits]` |
-| `motd` | `[persistence]`, `[metrics]`, `[plugins]`, `[[links]]` |
+| `[[operators]]` | `[limits]` |
+| `[[bans]]` (K-lines) | `[persistence]`, `[metrics]`, `[plugins]` |
+| `motd`, `[tls]` certificates, `[[links]]` | |
 
 Self-registered (persisted) accounts are re-applied on top of the config
 accounts after a rehash, so a `REHASH` never wipes runtime registrations.

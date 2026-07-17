@@ -130,8 +130,8 @@ install -o root -g ferrixd -m 644 \
 ```
 
 Existing outbound S2S links keep the certificate they handshook with until
-they reconnect. If you rotate the cert those links pin, re-link them
-(`SQUIT` + `CONNECT`) after the renewal.
+they reconnect (`SQUIT` + `CONNECT` forces that). `REHASH` refreshes the TLS
+client configuration for future operator `CONNECT` commands.
 
 ## Docker Compose
 

@@ -141,28 +141,59 @@ pub fn dispatch(session: &mut Session, msg: &Message<'_>) {
 
     // Commands allowed before (and after) registration.
     match upper {
-        Some("CAP") => return session.cmd_cap(params),
-        Some("AUTHENTICATE") => return session.cmd_authenticate(params),
-        // WEBIRC must precede CAP/NICK/USER; only meaningful pre-registration.
-        Some("WEBIRC") if !session.registered => return session.cmd_webirc(params),
-        Some("PASS") => return session.cmd_pass(params),
-        Some("NICK") => return session.cmd_nick(params),
-        Some("USER") => return session.cmd_user(params),
-        Some("PING") => return session.cmd_ping(params),
+        Some("CAP") => {
+            session.first_command_received = true;
+            return session.cmd_cap(params);
+        }
+        Some("AUTHENTICATE") => {
+            session.first_command_received = true;
+            return session.cmd_authenticate(params);
+        }
+        // WEBIRC is always routed through cmd_webirc, which enforces the
+        // first-command contract internally.
+        Some("WEBIRC") => return session.cmd_webirc(params),
+        Some("PASS") => {
+            session.first_command_received = true;
+            return session.cmd_pass(params);
+        }
+        Some("NICK") => {
+            session.first_command_received = true;
+            return session.cmd_nick(params);
+        }
+        Some("USER") => {
+            session.first_command_received = true;
+            return session.cmd_user(params);
+        }
+        Some("PING") => {
+            session.first_command_received = true;
+            return session.cmd_ping(params);
+        }
         // A PONG needs no reply; simply having been read already reset the
         // connection's idle timer (see `crate::connection`).
-        Some("PONG") => return,
-        Some("QUIT") => return session.cmd_quit(params),
+        Some("PONG") => {
+            session.first_command_received = true;
+            return;
+        }
+        Some("QUIT") => {
+            session.first_command_received = true;
+            return session.cmd_quit(params);
+        }
         // draft/pre-away: a client that negotiated the cap may set its AWAY
         // status before registration completes (bouncers/multi-connection).
-        Some("AWAY") if session.entry.caps().has(Cap::PreAway) => return session.cmd_away(params),
+        Some("AWAY") if session.entry.caps().has(Cap::PreAway) => {
+            session.first_command_received = true;
+            return session.cmd_away(params);
+        }
         _ => {}
     }
 
     if !session.registered {
+        session.first_command_received = true;
         session.numeric(ERR_NOTREGISTERED, &[], Some("You have not registered"));
         return;
     }
+
+    session.first_command_received = true;
 
     // Absorb messages belonging to an in-progress draft/multiline batch.
     if session.try_multiline_accumulate(msg) {
@@ -4263,16 +4294,13 @@ impl Session {
     /// failure closes the connection without disclosing which check failed.
     fn cmd_webirc(&mut self, params: &[&str]) {
         // Must be the first command: a gateway sends it before anything else.
-        if self.registered
-            || self.webirc_applied
-            || self.cap_negotiating
-            || self.has_user
-            || self.has_nick()
-            || self.pass.is_some()
-        {
+        if self.first_command_received || self.registered || self.webirc_applied {
             self.quit = Some("WEBIRC command out of sequence".to_owned());
             return;
         }
+        // Mark that the first command has been received, so subsequent attempts
+        // or other commands will be rejected.
+        self.first_command_received = true;
         let (Some(&password), Some(&gateway), Some(&hostname), Some(&ip)) =
             (params.first(), params.get(1), params.get(2), params.get(3))
         else {

@@ -46,7 +46,7 @@ Two deliberate exceptions:
 - **Releases**: prebuilt binaries for 7 targets with a checksum-verifying
   installer ([installation](/guide/installation)).
 
-## Since 1.0 (unreleased)
+## Since 1.0
 
 Work that has landed on top of 1.0 — most of it former Horizon items — while
 holding the 1.x stability promise:
