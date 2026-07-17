@@ -818,6 +818,7 @@ async fn isupport_advertises_expanded_tokens() {
         "UTF8ONLY",
         "CHATHISTORY=",
         "SAFELIST",
+        "EXTBAN=~,a",
     ] {
         assert!(
             isupport.contains(token),

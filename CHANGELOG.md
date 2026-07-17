@@ -41,6 +41,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every TLS listener (client, `wss://`, and the S2S link listener) without
   dropping the process or any live connection; a failed reload keeps the
   previous material armed.
+- **`EXTBAN=~,a` ISUPPORT token** — the account extban (`~a:`, honoured in
+  `+b`/`+e`/`+I` since 1.0) is now advertised to clients in `RPL_ISUPPORT`.
 - **Plugin hooks for nick and topic changes** — the WASM host gains
   `ferrix_on_nick` and `ferrix_on_topic`, which can observe and veto those
   moderation events on the same fail-open ABI as messages and joins.

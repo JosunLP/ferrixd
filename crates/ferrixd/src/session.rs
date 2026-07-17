@@ -487,6 +487,8 @@ impl Session {
             format!("MODES={}", crate::command::MAX_MODE_CHANGES),
             "EXCEPTS=e".to_owned(),
             "INVEX=I".to_owned(),
+            // Account extban (`~a:<account>`), honoured in +b/+e/+I matching.
+            "EXTBAN=~,a".to_owned(),
             "MAXLIST=b:100,e:100,I:100".to_owned(),
             "MONITOR=100".to_owned(),
             "WATCH=100".to_owned(),
