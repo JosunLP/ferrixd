@@ -1320,12 +1320,14 @@ impl Session {
         // moderation event and is left untouched).
         if self.registered && nick != current {
             if let Some(plugin_host) = self.server.plugins() {
-                if plugin_host.on_nick(&current, nick) == crate::plugin::Verdict::Block {
-                    self.numeric(
-                        ERR_ERRONEUSNICKNAME,
-                        &[nick],
-                        Some("Nickname change refused by server policy"),
-                    );
+                let outcome = plugin_host.on_nick(&current, nick);
+                self.server.apply_plugin_actions(outcome.actions);
+                if outcome.verdict == crate::plugin::Verdict::Block {
+                    let reason = outcome
+                        .reason
+                        .as_deref()
+                        .unwrap_or("Nickname change refused by server policy");
+                    self.numeric(ERR_ERRONEUSNICKNAME, &[nick], Some(reason));
                     return;
                 }
             }
@@ -1557,13 +1559,14 @@ impl Session {
         // Let WASM plugins veto the join (fail-open; the guard reaps a channel
         // this rejected join would have created).
         if let Some(plugin_host) = self.server.plugins() {
-            if plugin_host.on_join(&self.entry.nick(), name) == crate::plugin::Verdict::Block {
-                self.fail(
-                    "JOIN",
-                    "JOIN_BLOCKED",
-                    &[name],
-                    "Join blocked by server policy",
-                );
+            let outcome = plugin_host.on_join(&self.entry.nick(), name);
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Join blocked by server policy");
+                self.fail("JOIN", "JOIN_BLOCKED", &[name], reason);
                 return;
             }
         }
@@ -1675,6 +1678,21 @@ impl Session {
             data.name.clone()
         };
 
+        // Let WASM plugins veto the part (fail-open) — e.g. a "no drive-by
+        // part during a vote" policy. The user stays in the channel.
+        if let Some(plugin_host) = self.server.plugins() {
+            let outcome = plugin_host.on_part(&self.entry.nick(), &display, reason.unwrap_or(""));
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Part blocked by server policy");
+                self.fail("PART", "PART_BLOCKED", &[&display], reason);
+                return;
+            }
+        }
+
         let (nick, user, host) = self.identity();
         let mut line = Line::user(&nick, &user, &host)
             .command("PART")
@@ -1761,15 +1779,14 @@ impl Session {
                 }
                 // Let WASM plugins veto the topic change (fail-open).
                 if let Some(plugin_host) = self.server.plugins() {
-                    if plugin_host.on_topic(&self.entry.nick(), &display, new_topic)
-                        == crate::plugin::Verdict::Block
-                    {
-                        self.fail(
-                            "TOPIC",
-                            "TOPIC_BLOCKED",
-                            &[display.as_str()],
-                            "Topic change blocked by server policy",
-                        );
+                    let outcome = plugin_host.on_topic(&self.entry.nick(), &display, new_topic);
+                    self.server.apply_plugin_actions(outcome.actions);
+                    if outcome.verdict == crate::plugin::Verdict::Block {
+                        let reason = outcome
+                            .reason
+                            .as_deref()
+                            .unwrap_or("Topic change blocked by server policy");
+                        self.fail("TOPIC", "TOPIC_BLOCKED", &[display.as_str()], reason);
                         return;
                     }
                 }
@@ -1900,22 +1917,28 @@ impl Session {
                 data.name.clone()
             };
 
-            // Let WASM plugins veto the message before it is recorded or sent.
-            if let Some(plugin_host) = self.server.plugins() {
-                if plugin_host.on_channel_message(&nick, &display, text)
-                    == crate::plugin::Verdict::Block
-                {
-                    if !is_notice {
-                        self.fail(
-                            command,
-                            "MSG_BLOCKED",
-                            &[&display],
-                            "Message blocked by server policy",
-                        );
+            // Let WASM plugins veto or rewrite the message before it is
+            // recorded or sent. A rewrite replaces the text everywhere: echo,
+            // history, and the S2S relay all carry the same rewritten text.
+            let plugin_replacement = match self.server.plugins() {
+                Some(plugin_host) => {
+                    let outcome = plugin_host.on_channel_message(&nick, &display, text);
+                    self.server.apply_plugin_actions(outcome.actions);
+                    if outcome.verdict == crate::plugin::Verdict::Block {
+                        if !is_notice {
+                            let reason = outcome
+                                .reason
+                                .as_deref()
+                                .unwrap_or("Message blocked by server policy");
+                            self.fail(command, "MSG_BLOCKED", &[&display], reason);
+                        }
+                        return;
                     }
-                    return;
+                    outcome.replacement
                 }
-            }
+                None => None,
+            };
+            let text = plugin_replacement.as_deref().unwrap_or(text);
 
             // Record for chathistory before delivery so the stored msgid matches
             // what recipients see live. STATUSMSG stays out of the shared
@@ -1982,6 +2005,29 @@ impl Session {
                 None,
             );
         } else {
+            // Private messages reach plugins only when the operator opted in
+            // via `expose_private_messages` (a privacy decision the plugin
+            // author never makes); then they may veto or rewrite like any
+            // channel message.
+            let plugin_replacement = match self.server.plugins() {
+                Some(plugin_host) => {
+                    let outcome = plugin_host.on_private_message(&nick, target, text);
+                    self.server.apply_plugin_actions(outcome.actions);
+                    if outcome.verdict == crate::plugin::Verdict::Block {
+                        if !is_notice {
+                            let reason = outcome
+                                .reason
+                                .as_deref()
+                                .unwrap_or("Message blocked by server policy");
+                            self.fail(command, "MSG_BLOCKED", &[target], reason);
+                        }
+                        return;
+                    }
+                    outcome.replacement
+                }
+                None => None,
+            };
+            let text = plugin_replacement.as_deref().unwrap_or(text);
             let folded = self.server.fold(target);
             let Some(dest) = self.server.find_client(&folded) else {
                 // Not local: relay to a remote user over the S2S link if known.
@@ -2876,6 +2922,21 @@ impl Session {
             );
             return;
         }
+
+        // Let WASM plugins veto the whole channel mode change (fail-open),
+        // after the op check. The payload carries the raw modes + arguments.
+        if let Some(plugin_host) = self.server.plugins() {
+            let outcome = plugin_host.on_mode(&self.entry.nick(), &display, &args.join(" "));
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Mode change blocked by server policy");
+                self.fail("MODE", "MODE_BLOCKED", &[&display], reason);
+                return;
+            }
+        }
         self.apply_channel_modes(&channel, &display, args);
     }
 
@@ -3134,6 +3195,21 @@ impl Session {
             (None, Some(remote)) => remote.nick.clone(),
             (None, None) => unreachable!("target existence checked above"),
         };
+
+        // Let WASM plugins veto the kick (fail-open), after the channel's own
+        // permission checks — plugin policy narrows, never widens, authority.
+        if let Some(plugin_host) = self.server.plugins() {
+            let outcome = plugin_host.on_kick(&kicker, &display, &target_display, reason);
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let fail_reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Kick blocked by server policy");
+                self.fail("KICK", "KICK_BLOCKED", &[&display], fail_reason);
+                return;
+            }
+        }
         let body = Line::user(&nick, &user, &host)
             .command("KICK")
             .param(&display)
@@ -3245,6 +3321,20 @@ impl Session {
             return;
         }
 
+        // Let WASM plugins veto the invite (fail-open).
+        if let Some(plugin_host) = self.server.plugins() {
+            let outcome = plugin_host.on_invite(&self.entry.nick(), &display, &target_nick_display);
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Invite blocked by server policy");
+                self.fail("INVITE", "INVITE_BLOCKED", &[&display], reason);
+                return;
+            }
+        }
+
         {
             // Bound the pending-invite set so a rapid INVITE flood cannot grow a
             // channel's memory without limit (invites are consumed on JOIN; any
@@ -3314,6 +3404,21 @@ impl Session {
                 Some("is already on channel"),
             );
             return;
+        }
+
+        // Plugin veto applies to remote-target invites too, so policy does
+        // not depend on which server the invitee happens to be on.
+        if let Some(plugin_host) = self.server.plugins() {
+            let outcome = plugin_host.on_invite(&self.entry.nick(), &display, &remote.nick);
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Invite blocked by server policy");
+                self.fail("INVITE", "INVITE_BLOCKED", &[&display], reason);
+                return;
+            }
         }
         let msg = crate::s2s::LinkMessage::Sinvite {
             source: self.server.local_uid(self.entry.id),

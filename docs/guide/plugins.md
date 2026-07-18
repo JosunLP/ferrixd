@@ -1,26 +1,44 @@
 # WASM Plugins
 
-ferrixd can load **WebAssembly plugins** that hook into server events —
-today: vetoing channel messages, joins, nick changes, and topic changes.
-Plugins run inside a pure-Rust WASM interpreter
-([`wasmi`](https://docs.rs/wasmi)) under a strict sandbox:
+ferrixd can load **WebAssembly plugins** that hook into server events:
+they can veto or **rewrite** messages, veto joins, nick changes, topics,
+parts, kicks, mode changes, and invites, observe connects and quits, keep
+bounded persistent state, query a read-only view of the server, and — when
+the operator grants it — send server notices. Plugins run inside a
+pure-Rust WASM interpreter ([`wasmi`](https://docs.rs/wasmi)) under a
+strict sandbox:
 
 - **No ambient authority.** A plugin can only call the host functions
-  ferrixd grants (currently: a logger). No filesystem, no network, no
-  clock, nothing.
-- **A fuel budget per call.** Every hook invocation gets a bounded number
-  of WASM instructions (default 5,000,000). An infinite loop *traps*
-  instead of wedging the server.
+  ferrixd provides (`ferrix.*`). No filesystem, no network, no process —
+  persistence exists only through the host-managed, size-bounded
+  key-value store.
+- **A fuel budget per call and a memory cap per instance.** Every hook
+  invocation gets a bounded number of WASM instructions (default
+  5,000,000); linear memory tops out at `max_memory` (default 16 MiB). An
+  infinite loop *traps* instead of wedging the server; unbounded
+  `memory.grow` fails.
 - **Fail-open on error.** If a plugin traps, runs out of fuel, or is
-  malformed, the event is **allowed** — a broken plugin degrades to a
-  no-op, never to a denial of service against your own users.
+  malformed, the event is **allowed** and the trapped call's queued output
+  is discarded — a broken plugin degrades to a no-op, never to a denial
+  of service against your own users.
+- **Deny-by-default capabilities.** Active abilities (like sending
+  notices) work only when *you* grant them per plugin in the config; a
+  plugin cannot grant itself anything. Plugin-produced text is sanitized
+  (no CR/LF injection), budgeted, and rate-limited, and server-originated
+  notices never re-enter the plugin hooks.
 
 ## Enabling the plugin host
 
 ```toml
 [plugins]
-dir = "/etc/ferrixd/plugins"   # every *.wasm here is loaded at startup
-fuel = 5000000                 # per-call instruction budget (optional)
+dir = "/etc/ferrixd/plugins"     # every *.wasm here is loaded at startup
+fuel = 5000000                   # per-call instruction budget (optional)
+max_memory = 16777216            # per-instance linear-memory cap in bytes (optional)
+state_dir = "/var/lib/ferrixd/plugin-state"  # optional: persist plugin KV stores
+expose_private_messages = false  # optional: feed DMs to plugins (privacy: your call)
+
+[plugins.grants]                 # optional: per-plugin capabilities
+"20-modbot" = ["send_notice"]
 ```
 
 Files load in sorted filename order (which is also hook call order — handy
@@ -32,16 +50,46 @@ to load is logged and skipped; the server still starts.
 | Hook | Fires on | Non-zero return means |
 | --- | --- | --- |
 | `ferrix_on_message` / `_v2` | every channel `PRIVMSG`/`NOTICE` (local and federated) | message blocked |
+| `ferrix_on_private_message` | user-to-user `PRIVMSG`/`NOTICE` (only if `expose_private_messages`) | message blocked |
 | `ferrix_on_join` | every channel join attempt (local and federated) | join rejected |
 | `ferrix_on_nick` | a registered local client's nick change | nick change rejected |
 | `ferrix_on_topic` | a local `TOPIC` that sets a new topic | topic change rejected |
+| `ferrix_on_part` | a local `PART` | part rejected (user stays) |
+| `ferrix_on_kick` | a local `KICK` (after the op check) | kick cancelled |
+| `ferrix_on_mode` | a local channel `MODE` change (after the op check) | whole change cancelled |
+| `ferrix_on_invite` | a local `INVITE` (after the checks) | invite cancelled |
+| `ferrix_on_connect` | a client completes registration | *(observe-only)* |
+| `ferrix_on_quit` | a registered client disconnects | *(observe-only)* |
+| `ferrix_on_load` | once at load, with your granted capabilities | *(observe-only)* |
 
 The `message` and `join` hooks run for **local and federated traffic alike**, so policy is uniform
-for everything this node delivers. The `nick` and `topic` hooks run only for local session commands.
+for everything this node delivers. The moderation hooks (`nick`, `topic`, `part`, `kick`, `mode`,
+`invite`) run for local session commands, always *after* the channel's own permission checks —
+plugin policy narrows authority, never widens it.
 A blocked message is not delivered and
 not recorded in history; the sender gets `FAIL PRIVMSG MSG_BLOCKED …`
-(standard-replies, with NOTICE fallback). Plugins are consulted in order;
+(standard-replies, with NOTICE fallback), with your custom reason if the
+plugin set one via `ferrix.set_reason`. Plugins are consulted in order;
 the first block wins.
+
+Beyond vetoing, message hooks can **rewrite**: call `ferrix.set_text` with
+the replacement and return `0`. The rewritten text is what recipients,
+history, and linked servers see, and what later plugins in the chain are
+shown. The host sanitizes every plugin-produced string (CR/LF stripped,
+length-capped), so a plugin can never smuggle protocol frames.
+
+Plugins also get, without any grant:
+
+- `ferrix.kv_get` / `ferrix.kv_set` — a per-plugin key-value store
+  (bounded: 256 keys / 64 KiB; persisted under `state_dir` if configured).
+  Karma counters, flood trackers, warn lists.
+- `ferrix.now_ms` — wall-clock time for cooldowns and rate limiting.
+- `ferrix.channel_members` / `ferrix.user_info` — read-only queries
+  against the live server state.
+
+And with a `send_notice` grant, `ferrix.send_notice` queues a server
+NOTICE to a nick or channel (max 4 per hook call, 120/minute) — enough to
+build moderation bots that warn, announce, and explain their decisions.
 
 ## Writing a plugin in Rust
 
@@ -123,8 +171,10 @@ registered client's nick change; non-zero keeps the old nick (the user
 gets `432 ERR_ERRONEUSNICKNAME`). `ferrix_on_topic(ptr, len)` receives
 `{"nick":"…","channel":"…","topic":"…"}` when a `TOPIC` sets a new topic
 (after the channel's own permission checks); non-zero rejects it (the user
-gets `FAIL TOPIC TOPIC_BLOCKED`). Both are optional exports, so existing
-plugins keep working unchanged.
+gets `FAIL TOPIC TOPIC_BLOCKED`). Every hook is an optional export, so
+existing plugins keep working unchanged — the full payload catalogue for
+the moderation and lifecycle hooks is in the
+[Plugin ABI reference](/reference/plugin-abi).
 
 ## Choosing a fuel budget
 

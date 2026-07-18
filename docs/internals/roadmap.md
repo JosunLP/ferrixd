@@ -59,6 +59,13 @@ holding the 1.x stability promise:
   changes** (`ferrix_on_nick`) and **topic changes** (`ferrix_on_topic`), on the
   same fail-open ABI as messages and joins
   ([reference](/reference/plugin-abi)).
+- **Plugin ABI v2.** The moderation events (part, kick, mode, invite), DM
+  filtering (operator-gated), lifecycle hooks (connect/quit/load), message
+  **rewriting** (`ferrix.set_text`), custom block reasons, a bounded
+  persistent key-value store, read-only world queries, a per-instance
+  memory cap, and the first capability-gated action (`ferrix.send_notice`,
+  deny-by-default via `[plugins.grants]`) — the sandbox properties are
+  unchanged: fail-open, fuel-bounded, no ambient authority.
 - **Live link management.** Operators can bring S2S links up and down at
   runtime with `CONNECT <name>` and `SQUIT <server> [:reason]`, beyond the
   config-driven links started at boot.
@@ -78,8 +85,10 @@ Direction, not commitment:
 
 - **Draft-spec tracking.** The `draft/*` capabilities follow their specs;
   ratified names are adopted as they land.
-- **Even richer plugin hooks.** Nick and topic events are covered; moderation
-  actions (kick, mode, kline) are the natural next extension of the same ABI.
+- **Even richer plugin capabilities.** The moderation events and the first
+  active capability (`send_notice`) are covered; further capability-gated
+  actions (kick, mode, kline as *actions*) are the natural next extension
+  of the same grants model.
 
 If you want to influence any of this, open an issue —
 [GitHub](https://github.com/josunlp/ferrixd/issues).

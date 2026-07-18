@@ -642,6 +642,49 @@ impl Server {
         self.plugins.get().filter(|host| !host.is_empty())
     }
 
+    /// Execute the actions plugins queued during a hook call. This runs after
+    /// the sandboxed call returned; server-originated output does not re-enter
+    /// the plugin hooks, so plugins cannot feed themselves an event loop.
+    pub fn apply_plugin_actions(&self, actions: Vec<crate::plugin::Action>) {
+        for action in actions {
+            match action {
+                crate::plugin::Action::Notice { target, text } => {
+                    self.plugin_notice(&target, &text);
+                }
+            }
+        }
+    }
+
+    /// Deliver a plugin-queued server NOTICE to a channel or a local nick.
+    /// Unknown targets are dropped (the plugin already got its return code;
+    /// the world may simply have moved on since).
+    fn plugin_notice(&self, target: &str, text: &str) {
+        let folded = self.fold(target);
+        if target.starts_with('#') {
+            let Some(channel) = self.find_channel(&folded) else {
+                return;
+            };
+            let display = channel.data.lock().name.clone();
+            let body = Line::server(&self.info.name)
+                .command("NOTICE")
+                .param(&display)
+                .trailing(text)
+                .body();
+            let event =
+                crate::deliver::Event::new(body).with_time(format_server_time(now_millis()));
+            crate::deliver::to_channel(&channel, &event, None);
+        } else if let Some(entry) = self.find_client(&folded) {
+            let body = Line::server(&self.info.name)
+                .command("NOTICE")
+                .param(&entry.nick())
+                .trailing(text)
+                .body();
+            let event =
+                crate::deliver::Event::new(body).with_time(format_server_time(now_millis()));
+            crate::deliver::to_client(&entry, &event);
+        }
+    }
+
     /// Attach the hot-swappable TLS configuration (so `REHASH` can reload certs).
     pub fn attach_tls(&self, tls: Arc<crate::tls::SharedServerTls>) {
         let _ = self.tls.set(tls);
@@ -3723,14 +3766,20 @@ impl Server {
         };
         let source_nick = source.split('!').next().unwrap_or(source);
         // Relayed messages pass the same plugin policy as local ones; a block
-        // also stops the onward relay so the whole (sub)tree stays consistent.
-        if let Some(host) = self.plugins() {
-            if host.on_channel_message(source_nick, base_name, text)
-                == crate::plugin::Verdict::Block
-            {
-                return;
+        // also stops the onward relay so the whole (sub)tree stays consistent,
+        // and a rewrite travels onward so every server shows the same text.
+        let plugin_replacement = match self.plugins() {
+            Some(host) => {
+                let outcome = host.on_channel_message(source_nick, base_name, text);
+                self.apply_plugin_actions(outcome.actions);
+                if outcome.verdict == crate::plugin::Verdict::Block {
+                    return;
+                }
+                outcome.replacement
             }
-        }
+            None => None,
+        };
+        let text = plugin_replacement.as_deref().unwrap_or(text);
         let display = channel.data.lock().name.clone();
         let (account, bot) = self.remote_source_meta(source_nick);
         // Keep the origin's msgid/time when the wire carried them, so the
@@ -3863,6 +3912,12 @@ impl Server {
         };
 
         if registered {
+            // Observe-only plugin hook: a registered client is going away
+            // (QUIT, connection drop, or KILL alike). Cannot be vetoed.
+            if let Some(plugins) = self.plugins() {
+                let outcome = plugins.on_quit(&nick, reason);
+                self.apply_plugin_actions(outcome.actions);
+            }
             let realname = entry.data.lock().realname.clone();
             self.record_whowas(&nick, &user, &host, &realname);
             // A single QUIT to everyone who shared a channel (deduped), rendered
@@ -4056,6 +4111,42 @@ impl ClientEntry {
         d.silence
             .iter()
             .any(|mask| crate::mask::matches(mask, source_mask))
+    }
+}
+
+/// Read-only world view for plugin query host functions (`ferrix.channel_members`,
+/// `ferrix.user_info`). Strictly informational: nothing here can mutate state.
+impl crate::plugin::WorldView for Server {
+    fn channel_members(&self, channel: &str) -> Option<Vec<String>> {
+        let channel = self.find_channel(&self.fold(channel))?;
+        let data = channel.data.lock();
+        let mut nicks: Vec<String> = data.members.values().map(|m| m.entry.nick()).collect();
+        nicks.extend(data.remote_members.values().map(|m| m.nick.clone()));
+        Some(nicks)
+    }
+
+    fn user_info_json(&self, nick: &str) -> Option<String> {
+        let entry = self.find_client(&self.fold(nick))?;
+        let d = entry.data.lock();
+        let mut out = String::from("{\"nick\":");
+        crate::plugin::push_json_string(&mut out, &d.nick);
+        out.push_str(",\"user\":");
+        crate::plugin::push_json_string(&mut out, &d.user);
+        out.push_str(",\"host\":");
+        crate::plugin::push_json_string(&mut out, &d.host);
+        out.push_str(",\"account\":");
+        match &d.account {
+            Some(account) => crate::plugin::push_json_string(&mut out, account),
+            None => out.push_str("null"),
+        }
+        out.push_str(",\"away\":");
+        out.push_str(if d.away.is_some() { "true" } else { "false" });
+        out.push_str(",\"oper\":");
+        out.push_str(if d.oper { "true" } else { "false" });
+        out.push_str(",\"bot\":");
+        out.push_str(if d.bot { "true" } else { "false" });
+        out.push('}');
+        Some(out)
     }
 }
 

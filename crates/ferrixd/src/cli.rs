@@ -357,10 +357,23 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
     // Optional WebAssembly plugin host.
     if let Some(plugins_cfg) = &config.plugins {
         let mut host = crate::plugin::PluginHost::new(plugins_cfg.fuel);
+        host.set_max_memory(plugins_cfg.max_memory);
+        host.set_expose_private_messages(plugins_cfg.expose_private_messages);
+        host.set_grants(&plugins_cfg.grants);
+        if let Some(state_dir) = &plugins_cfg.state_dir {
+            if let Err(err) = std::fs::create_dir_all(state_dir) {
+                error!(dir = %state_dir.display(), %err, "failed to create plugin state dir");
+            } else {
+                host.set_state_dir(state_dir.clone());
+            }
+        }
         match host.load_dir(&plugins_cfg.dir) {
             Ok(count) => info!(count, dir = %plugins_cfg.dir.display(), "WASM plugins loaded"),
             Err(err) => error!(%err, "failed to read plugin directory"),
         }
+        // Read-only world view for the query host functions (Weak: the host
+        // lives inside the server, so a strong ref would be a cycle).
+        host.set_world(Arc::downgrade(&server) as std::sync::Weak<dyn crate::plugin::WorldView>);
         server.attach_plugins(host);
     }
 
