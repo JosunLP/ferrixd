@@ -49,7 +49,9 @@ oper connection is still a misbehaving connection.
 | `UNDLINE <ip-mask>` | IP mask | lift a D-line |
 | `CHGHOST <nick> <user> <host>` | one user | change displayed user@host |
 | `WALLOPS :<text>` | all `+w` users | operator broadcast |
-| `REHASH` | server | hot-reload config subset |
+| `REHASH` | server | hot-reload config subset + TLS certificate/key |
+| `CONNECT <name>` | S2S link | bring up a configured peer link at runtime |
+| `SQUIT <server> [:reason]` | S2S link | disconnect a directly-linked peer (and its subtree) |
 
 ### K-lines: banning by mask
 
@@ -126,9 +128,9 @@ dropping connections**, and answers `382 RPL_REHASHING`. What it reloads:
 | Reloaded | Not reloaded (restart required) |
 | --- | --- |
 | `[[accounts]]` | listeners (`tls_bind`, `plain_bind`, `link_bind`) |
-| `[[operators]]` | `[tls]` certificates |
-| `[[bans]]` (K-lines) | `[limits]` |
-| `motd` | `[persistence]`, `[metrics]`, `[plugins]`, `[[links]]` |
+| `[[operators]]` | `[limits]` |
+| `[[bans]]` (K-lines) | `[persistence]`, `[metrics]`, `[plugins]` |
+| `motd`, `[tls]` certificates, `[[links]]` | |
 
 Self-registered (persisted) accounts are re-applied on top of the config
 accounts after a rehash, so a `REHASH` never wipes runtime registrations.

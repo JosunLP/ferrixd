@@ -43,6 +43,26 @@ pub struct Config {
     /// Optional WebAssembly plugin host.
     #[serde(default)]
     pub plugins: Option<PluginsConfig>,
+    /// Trusted WEBIRC gateways (web/IRC gateways permitted to spoof a client's
+    /// real host and IP). Empty (the default) disables the `WEBIRC` command.
+    #[serde(default)]
+    pub webirc: Vec<WebircConfig>,
+}
+
+/// A trusted WEBIRC gateway (IRCv3 `WEBIRC`). A gateway authenticates with a
+/// shared password AND must connect from an allow-listed source address; both
+/// checks must pass before it may rewrite a client's apparent host/IP.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebircConfig {
+    /// Gateway identifier, matched against the WEBIRC `<gateway>` parameter.
+    pub name: String,
+    /// Shared secret the gateway presents as the WEBIRC `<password>`. Prefer a
+    /// long random value; it is compared in constant time.
+    pub password: String,
+    /// Source-address globs (e.g. `127.0.0.1`, `10.0.0.*`) the gateway is
+    /// allowed to connect from. A WEBIRC from any other address is refused.
+    pub hosts: Vec<String>,
 }
 
 /// A configured S2S peer link.
@@ -182,6 +202,11 @@ pub struct ServerConfig {
     /// Advertised network name (`ISUPPORT NETWORK`).
     #[serde(default = "default_network")]
     pub network: String,
+    /// Optional network icon URL (IRCv3 `draft/network-icon`), advertised as the
+    /// `draft/ICON` ISUPPORT token. Should be an HTTPS URL to a (square) image;
+    /// a literal `{size}` template is passed through for clients to substitute.
+    #[serde(default)]
+    pub icon: Option<String>,
     /// Network-wide case-folding rule for nicks/channels.
     #[serde(default)]
     pub casemapping: crate::casemap::CaseMapping,
@@ -204,9 +229,17 @@ pub struct ServerConfig {
     pub plain_bind: Option<SocketAddr>,
     /// Guard rail: a plaintext bind to a non-loopback address is refused unless
     /// this is explicitly set to `true` (plaintext is loopback-only
-    /// by default).
+    /// by default). Also governs `ws_bind`.
     #[serde(default)]
     pub allow_plain_nonlocal: bool,
+    /// Optional plaintext WebSocket (`ws://`) listen address. Like `plain_bind`,
+    /// loopback-only unless `allow_plain_nonlocal = true` (prefer `wss_bind`).
+    #[serde(default)]
+    pub ws_bind: Option<SocketAddr>,
+    /// Optional secure WebSocket (`wss://`) listen address, terminating TLS with
+    /// the same certificate as `tls_bind` before the WebSocket handshake.
+    #[serde(default)]
+    pub wss_bind: Option<SocketAddr>,
     /// Optional connection password: clients must send a matching `PASS`
     /// before completing registration (`ERR_PASSWDMISMATCH` otherwise).
     #[serde(default)]
@@ -464,6 +497,15 @@ impl Config {
                 return Err(ConfigError::Invalid(format!(
                     "plain_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
                      cleartext on a public interface (not recommended)"
+                )));
+            }
+        }
+        // The plaintext WebSocket listener is held to the same rule.
+        if let Some(addr) = self.server.ws_bind {
+            if !addr.ip().is_loopback() && !self.server.allow_plain_nonlocal {
+                return Err(ConfigError::Invalid(format!(
+                    "ws_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
+                     cleartext WebSocket on a public interface (use wss_bind instead)"
                 )));
             }
         }

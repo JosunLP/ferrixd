@@ -77,7 +77,8 @@ MODE #forge +I ~a:staff*       # any account matching staff* joins through +i
 ```
 
 Account extbans survive IP changes, cloaks, and nick changes — they follow
-the identity. They work in all three lists (`+b`/`+e`/`+I`).
+the identity. They work in all three lists (`+b`/`+e`/`+I`). The support is
+advertised to clients as `EXTBAN=~,a` in `RPL_ISUPPORT` (005).
 
 ### Enforcement
 

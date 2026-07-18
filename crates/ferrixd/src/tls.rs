@@ -9,12 +9,64 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use parking_lot::RwLock;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::ServerConfig;
 use sha2::{Digest, Sha256};
+use tokio_rustls::TlsAcceptor;
 
 use crate::config::TlsConfig;
+
+/// A hot-swappable server-side TLS configuration shared by every TLS listener
+/// (`tls_bind`, `wss_bind`, the S2S link listener). Listeners build a fresh
+/// [`TlsAcceptor`] from the current config on each accept, so `REHASH` can
+/// install a renewed certificate/key without dropping the process or any live
+/// connection — only handshakes started after the swap use the new material.
+#[derive(Debug)]
+pub struct SharedServerTls {
+    config: RwLock<Arc<ServerConfig>>,
+}
+
+impl SharedServerTls {
+    /// Wrap an initial [`ServerConfig`] in a shared, swappable holder.
+    #[must_use]
+    pub fn new(config: Arc<ServerConfig>) -> Arc<Self> {
+        Arc::new(Self {
+            config: RwLock::new(config),
+        })
+    }
+
+    /// A [`TlsAcceptor`] over the current configuration. Cheap: it only clones
+    /// the inner `Arc`, so callers build one per accepted connection.
+    #[must_use]
+    pub fn acceptor(&self) -> TlsAcceptor {
+        TlsAcceptor::from(self.config.read().clone())
+    }
+
+    /// Rebuild the server configuration from `cfg` and swap it in atomically.
+    /// Connections handshaking after this call use the new certificate/key;
+    /// existing connections are unaffected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error (leaving the current config in place) if the new
+    /// certificate material cannot be loaded — so a bad `REHASH` never disarms
+    /// the listener.
+    pub fn reload(&self, cfg: &TlsConfig) -> Result<()> {
+        let rebuilt = build_server_config(cfg)?;
+        self.install(rebuilt);
+        Ok(())
+    }
+
+    /// Swap in an already-built configuration (see [`build_server_config`]).
+    ///
+    /// Lets `REHASH` stage/validate the new material first and commit it only
+    /// after every other part of the reload has succeeded.
+    pub fn install(&self, config: Arc<ServerConfig>) {
+        *self.config.write() = config;
+    }
+}
 
 /// Load the daemon's certificate chain and private key from its TLS config.
 fn cert_material(
@@ -289,4 +341,44 @@ fn generate_self_signed(
     let cert_der = certified.cert.der().clone();
     let key_der = PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());
     Ok((vec![cert_der], PrivateKeyDer::Pkcs8(key_der)))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::config::TlsConfig;
+    use std::path::PathBuf;
+
+    fn dev_config() -> TlsConfig {
+        TlsConfig {
+            cert: None,
+            key: None,
+            self_signed_dev: true,
+            dev_hostnames: vec!["localhost".to_owned()],
+        }
+    }
+
+    #[test]
+    fn reload_swaps_config_and_bad_material_leaves_it_armed() {
+        let initial = build_server_config(&dev_config()).unwrap();
+        let shared = SharedServerTls::new(initial);
+        // A fresh dev config reloads cleanly.
+        shared.reload(&dev_config()).unwrap();
+        let armed = Arc::as_ptr(&shared.config.read().clone());
+
+        // A config pointing at nonexistent cert material must fail the reload
+        // without disarming the listener (the previous config stays in place).
+        let bad = TlsConfig {
+            cert: Some(PathBuf::from("/nonexistent/cert.pem")),
+            key: Some(PathBuf::from("/nonexistent/key.pem")),
+            self_signed_dev: false,
+            dev_hostnames: Vec::new(),
+        };
+        assert!(shared.reload(&bad).is_err());
+        // The armed config is unchanged after the failed reload.
+        assert_eq!(armed, Arc::as_ptr(&shared.config.read().clone()));
+        // And an acceptor is still obtainable.
+        let _ = shared.acceptor();
+    }
 }

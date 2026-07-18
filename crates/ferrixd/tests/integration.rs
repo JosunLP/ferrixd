@@ -44,6 +44,7 @@ fn test_context() -> ConnContext {
         name: "irc.test".to_owned(),
         sid: "42T".to_owned(),
         network: "TestNet".to_owned(),
+        icon: None,
         version: "ferrixd-test".to_owned(),
         created: "2026-07-08 00:00:00 UTC".to_owned(),
         casemapping: CaseMapping::Ascii,
@@ -265,7 +266,7 @@ async fn malformed_line_does_not_drop_connection() {
 #[tokio::test]
 async fn tls_registration_end_to_end() {
     use tokio::net::{TcpListener, TcpStream};
-    use tokio_rustls::{TlsAcceptor, TlsConnector};
+    use tokio_rustls::TlsConnector;
 
     let tls_config = ferrixd::tls::build_server_config(&ferrixd::config::TlsConfig {
         cert: None,
@@ -274,14 +275,15 @@ async fn tls_registration_end_to_end() {
         dev_hostnames: vec!["localhost".to_owned()],
     })
     .expect("server TLS config");
-    let acceptor = TlsAcceptor::from(tls_config);
+    // run_tls takes the hot-swappable holder (REHASH cert rotation).
+    let shared_tls = ferrixd::tls::SharedServerTls::new(tls_config);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let ctx = test_context();
     tokio::spawn(ferrixd::listener::run_tls(
         listener,
-        acceptor,
+        shared_tls,
         ctx,
         Duration::from_secs(5),
     ));
@@ -401,6 +403,92 @@ async fn sasl_plain_wrong_password_fails() {
         .await;
     let fail = c.expect("904").await;
     assert!(fail.contains("904"), "expected ERR_SASLFAIL: {fail}");
+}
+
+#[tokio::test]
+async fn sasl_reauthenticate_mid_session_switches_account() {
+    // Two accounts on one server: alice logs in during registration, then
+    // re-authenticates as bob after registration (IRCv3 SASL 3.2 reauth).
+    let ctx = test_context_with_account("alice", "pw-alice");
+    ctx.server.accounts.set_password("bob", "pw-bob").unwrap();
+    let mut c = Conn::spawn(ctx, 7221);
+
+    c.send("CAP REQ :sasl").await;
+    c.expect("ACK").await;
+    c.send("AUTHENTICATE PLAIN").await;
+    c.expect("AUTHENTICATE +").await;
+    c.send(&format!(
+        "AUTHENTICATE {}",
+        plain_payload("alice", "pw-alice")
+    ))
+    .await;
+    c.expect("903").await;
+    c.send("NICK alice").await;
+    c.send("USER alice 0 * :Alice").await;
+    c.send("CAP END").await;
+    c.expect("001").await;
+
+    // Mid-session: re-authenticate as bob without reconnecting.
+    c.send("AUTHENTICATE PLAIN").await;
+    c.expect("AUTHENTICATE +").await;
+    c.send(&format!("AUTHENTICATE {}", plain_payload("bob", "pw-bob")))
+        .await;
+    let ok = c.expect("903").await;
+    assert!(ok.contains("900"), "no RPL_LOGGEDIN on reauth: {ok}");
+    assert!(ok.contains("bob"), "reauth did not report bob: {ok}");
+
+    // WHOIS now reflects the new account.
+    c.send("WHOIS alice").await;
+    let whois = c.expect("End of /WHOIS").await;
+    assert!(whois.contains("330"), "no RPL_WHOISACCOUNT: {whois}");
+    assert!(
+        whois.contains("bob"),
+        "WHOIS still shows old account: {whois}"
+    );
+}
+
+#[tokio::test]
+async fn sasl_reauthenticate_failure_keeps_existing_login() {
+    // A failed mid-session reauth must leave the original login untouched.
+    let ctx = test_context_with_account("alice", "pw-alice");
+    ctx.server.accounts.set_password("bob", "pw-bob").unwrap();
+    let mut c = Conn::spawn(ctx, 7222);
+
+    c.send("CAP REQ :sasl").await;
+    c.expect("ACK").await;
+    c.send("AUTHENTICATE PLAIN").await;
+    c.expect("AUTHENTICATE +").await;
+    c.send(&format!(
+        "AUTHENTICATE {}",
+        plain_payload("alice", "pw-alice")
+    ))
+    .await;
+    c.expect("903").await;
+    c.send("NICK alice").await;
+    c.send("USER alice 0 * :Alice").await;
+    c.send("CAP END").await;
+    c.expect("001").await;
+
+    // Wrong password for bob: the attempt fails.
+    c.send("AUTHENTICATE PLAIN").await;
+    c.expect("AUTHENTICATE +").await;
+    c.send(&format!("AUTHENTICATE {}", plain_payload("bob", "wrong")))
+        .await;
+    c.expect("904").await;
+
+    // The original alice login is still in effect.
+    c.send("WHOIS alice").await;
+    let whois = c.expect("End of /WHOIS").await;
+    assert!(whois.contains("330"), "no RPL_WHOISACCOUNT: {whois}");
+    // Validate the account parameter in the 330 reply line (not just presence of "alice").
+    let account_line = whois
+        .lines()
+        .find(|line| line.contains(" 330 "))
+        .expect("330 line missing");
+    assert!(
+        account_line.ends_with(" alice :is logged in as"),
+        "account parameter is not alice: {account_line}"
+    );
 }
 
 #[tokio::test]
@@ -730,6 +818,7 @@ async fn isupport_advertises_expanded_tokens() {
         "UTF8ONLY",
         "CHATHISTORY=",
         "SAFELIST",
+        "EXTBAN=~,a",
     ] {
         assert!(
             isupport.contains(token),
@@ -772,6 +861,7 @@ async fn channel_limit_is_enforced() {
         name: "irc.test".to_owned(),
         sid: "42T".to_owned(),
         network: "TestNet".to_owned(),
+        icon: None,
         version: "ferrixd-test".to_owned(),
         created: "c".to_owned(),
         casemapping: CaseMapping::Ascii,
@@ -1836,6 +1926,382 @@ async fn chathistory_targets_lists_dm_partners() {
         targets.contains("TARGETS bob"),
         "the DM partner was not listed: {targets}"
     );
+}
+
+// ------------------------------------------------------------------------
+// IRCv3 additions: bot-mode, no-implicit-names, pre-away, extended-isupport,
+// network-icon, WEBIRC, and the WebSocket transport.
+// ------------------------------------------------------------------------
+
+/// A test context whose network advertises an icon URL (draft/network-icon).
+fn test_context_with_icon(icon: &str) -> ConnContext {
+    let mut ctx = test_context();
+    let server = Server::new(ServerInfo {
+        name: "irc.test".to_owned(),
+        sid: "42T".to_owned(),
+        network: "TestNet".to_owned(),
+        icon: Some(icon.to_owned()),
+        version: "ferrixd-test".to_owned(),
+        created: "2026-07-08 00:00:00 UTC".to_owned(),
+        casemapping: CaseMapping::Ascii,
+        motd: Vec::new(),
+        history_len: 500,
+        history_max_targets: 50_000,
+        max_channels: 50,
+        cloak_key: None,
+        sts: None,
+    });
+    ctx.server = server;
+    ctx
+}
+
+#[tokio::test]
+async fn bot_mode_shows_in_whois_who_and_message_tag() {
+    let ctx = test_context();
+    let mut bot = Conn::spawn(ctx.clone(), 9600);
+    let mut watcher = Conn::spawn(ctx.clone(), 9601);
+    bot.register("botty").await;
+    watcher.register_caps("watcher", "message-tags").await;
+
+    // Declare the bot; the change is echoed back.
+    bot.send("MODE botty +B").await;
+    bot.expect("MODE botty").await;
+
+    // WHOIS carries RPL_WHOISBOT (335).
+    watcher.send("WHOIS botty").await;
+    let whois = watcher.expect("End of /WHOIS").await;
+    assert!(whois.contains(" 335 "), "no RPL_WHOISBOT: {whois}");
+
+    // The bot creates a channel (becomes op); WHO shows the bot flag `B`.
+    bot.send("JOIN #c").await;
+    bot.expect("End of /NAMES").await;
+    watcher.send("JOIN #c").await;
+    watcher.expect("End of /NAMES").await;
+    watcher.send("WHO #c").await;
+    let who = watcher.expect(" 315 ").await;
+    let botline = who
+        .lines()
+        .find(|l| l.contains(" 352 ") && l.contains("botty"))
+        .unwrap_or_else(|| panic!("no WHO row for botty: {who}"));
+    assert!(botline.contains("HB"), "no bot flag in WHO row: {botline}");
+
+    // A message from the bot carries a bare `@bot` tag for message-tags clients.
+    bot.send("PRIVMSG #c :beep").await;
+    let msg = watcher.expect("beep").await;
+    let line = msg
+        .lines()
+        .rev()
+        .find(|l| l.contains("PRIVMSG"))
+        .unwrap_or_else(|| panic!("no PRIVMSG line: {msg}"));
+    let tag_section = line
+        .strip_prefix('@')
+        .unwrap_or_else(|| panic!("PRIVMSG not tagged: {line}"))
+        .split(' ')
+        .next()
+        .unwrap();
+    assert!(
+        tag_section.split(';').any(|t| t == "bot"),
+        "no @bot tag: {line}"
+    );
+}
+
+#[tokio::test]
+async fn no_implicit_names_suppresses_join_names_burst() {
+    let ctx = test_context();
+    let mut alice = Conn::spawn(ctx, 9610);
+    alice.register_caps("alice", "no-implicit-names").await;
+
+    // A PING/PONG barrier flushes everything the JOIN produced.
+    alice.send("JOIN #x").await;
+    alice.send("PING :sync").await;
+    let after_join = alice.expect("PONG").await;
+    assert!(after_join.contains("JOIN"), "no JOIN echo: {after_join}");
+    assert!(
+        !after_join.contains(" 353 ") && !after_join.contains(" 366 "),
+        "implicit NAMES was not suppressed: {after_join}"
+    );
+
+    // An explicit NAMES still works.
+    alice.send("NAMES #x").await;
+    let names = alice.expect(" 366 ").await;
+    assert!(
+        names.contains(" 353 ") && names.contains("alice"),
+        "explicit NAMES missing the member list: {names}"
+    );
+}
+
+#[tokio::test]
+async fn pre_away_is_accepted_before_registration() {
+    let ctx = test_context();
+    let mut alice = Conn::spawn(ctx, 9620);
+    alice.send("CAP REQ :draft/pre-away").await;
+    alice.expect("ACK").await;
+
+    // AWAY before registration is accepted (RPL_NOWAWAY, target `*`).
+    alice.send("AWAY :back soon").await;
+    alice.expect(" 306 ").await;
+
+    alice.send("NICK alice").await;
+    alice.send("USER alice 0 * :Alice").await;
+    alice.send("CAP END").await;
+    alice.expect(" 001 ").await;
+
+    // The away status survived into the registered session.
+    alice.send("WHOIS alice").await;
+    let whois = alice.expect("End of /WHOIS").await;
+    assert!(
+        whois.contains("back soon"),
+        "pre-registration AWAY was lost: {whois}"
+    );
+}
+
+#[tokio::test]
+async fn extended_isupport_arrives_before_welcome() {
+    let ctx = test_context();
+    let mut alice = Conn::spawn(ctx, 9630);
+    alice.send("CAP REQ :draft/extended-isupport").await;
+    alice.expect("ACK").await;
+    alice.send("NICK alice").await;
+    alice.send("USER alice 0 * :Alice").await;
+    alice.send("CAP END").await;
+
+    // `expect` stops at the first line containing " 001 ". With the cap, ISUPPORT
+    // is delivered during negotiation — i.e. BEFORE RPL_WELCOME — so it appears
+    // in the accumulated text; without it, 005 would only follow 001.
+    let before_welcome = alice.expect(" 001 ").await;
+    assert!(
+        before_welcome.contains(" 005 ") && before_welcome.contains("CASEMAPPING"),
+        "ISUPPORT was not sent before RPL_WELCOME: {before_welcome}"
+    );
+}
+
+#[tokio::test]
+async fn network_icon_advertised_in_isupport() {
+    let ctx = test_context_with_icon("https://example.org/icon.svg");
+    let mut alice = Conn::spawn(ctx, 9640);
+    alice.register("alice").await;
+    let isupport = alice.expect("draft/ICON").await;
+    assert!(
+        isupport.contains("draft/ICON=https://example.org/icon.svg"),
+        "network icon not advertised: {isupport}"
+    );
+}
+
+#[tokio::test]
+async fn bot_isupport_token_present() {
+    let ctx = test_context();
+    let mut alice = Conn::spawn(ctx, 9645);
+    alice.register("alice").await;
+    let isupport = alice.expect("CASEMAPPING").await;
+    assert!(
+        isupport.contains("BOT=B"),
+        "no BOT ISUPPORT token: {isupport}"
+    );
+}
+
+#[tokio::test]
+async fn webirc_rewrites_apparent_host() {
+    let ctx = test_context();
+    ctx.server
+        .set_webirc_gateways(vec![ferrixd::config::WebircConfig {
+            name: "gw".to_owned(),
+            password: "s3cret".to_owned(),
+            hosts: vec!["127.0.0.1".to_owned()],
+        }]);
+    let mut bob = Conn::spawn(ctx, 9650);
+
+    // WEBIRC must be the first command; it rewrites host and IP.
+    bob.send("WEBIRC s3cret gw client.example.test 198.51.100.7")
+        .await;
+    let welcome = bob.register("bob").await;
+    assert!(
+        welcome.contains("bob!~bob@client.example.test"),
+        "WEBIRC host was not applied: {welcome}"
+    );
+
+    // The real (spoofed) IP is visible to the user themself via RPL_WHOISACTUALLY.
+    bob.send("WHOIS bob").await;
+    let whois = bob.expect("End of /WHOIS").await;
+    assert!(
+        whois.contains("198.51.100.7"),
+        "WEBIRC IP was not applied: {whois}"
+    );
+}
+
+#[tokio::test]
+async fn webirc_rejected_when_not_first_command() {
+    let ctx = test_context();
+    ctx.server
+        .set_webirc_gateways(vec![ferrixd::config::WebircConfig {
+            name: "gw".to_owned(),
+            password: "s3cret".to_owned(),
+            hosts: vec!["127.0.0.1".to_owned()],
+        }]);
+    let mut bob = Conn::spawn(ctx, 9657);
+    // Any earlier traffic — even a numeric the server ignores — closes the
+    // first-command window; the following WEBIRC must be refused.
+    bob.send("001 x").await;
+    bob.send("WEBIRC s3cret gw client.example.test 198.51.100.7")
+        .await;
+    let err = bob.expect("ERROR").await;
+    assert!(
+        err.contains("out of sequence"),
+        "WEBIRC after another command was not refused: {err}"
+    );
+}
+
+#[tokio::test]
+async fn webirc_rejects_wrong_password() {
+    let ctx = test_context();
+    ctx.server
+        .set_webirc_gateways(vec![ferrixd::config::WebircConfig {
+            name: "gw".to_owned(),
+            password: "s3cret".to_owned(),
+            hosts: vec!["127.0.0.1".to_owned()],
+        }]);
+    let mut bob = Conn::spawn(ctx, 9655);
+    bob.send("WEBIRC wrong gw client.example.test 198.51.100.7")
+        .await;
+    // A bad gateway secret closes the connection with an ERROR.
+    let err = bob.expect("ERROR").await;
+    assert!(
+        err.contains("WEBIRC authentication failed"),
+        "expected auth failure ERROR: {err}"
+    );
+}
+
+/// A minimal RFC 6455 client used to drive the server's WebSocket transport
+/// without pulling in a WebSocket crate. Each IRC line is one masked text frame;
+/// server frames arrive unmasked.
+struct WsTestClient<S> {
+    io: S,
+}
+
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> WsTestClient<S> {
+    /// Perform the client handshake and assert the server's `Sec-WebSocket-Accept`.
+    async fn connect(mut io: S, subprotocol: &str) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // "dGhlIHNhbXBsZSBub25jZQ==" → RFC 6455's worked-example accept value.
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
+             Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {subprotocol}\r\n\r\n"
+        );
+        io.write_all(request.as_bytes()).await.unwrap();
+
+        let mut resp = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(5), io.read(&mut byte))
+                .await
+                .expect("WebSocket handshake timed out")
+                .unwrap();
+            assert!(n == 1, "EOF during handshake response");
+            resp.push(byte[0]);
+            if resp.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let resp = String::from_utf8_lossy(&resp);
+        assert!(resp.contains("101 Switching Protocols"), "no 101: {resp}");
+        assert!(
+            resp.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
+            "wrong Sec-WebSocket-Accept: {resp}"
+        );
+        assert!(
+            resp.contains(&format!("Sec-WebSocket-Protocol: {subprotocol}")),
+            "subprotocol not echoed: {resp}"
+        );
+        Self { io }
+    }
+
+    /// Send one IRC line as a masked WebSocket text frame.
+    async fn send_line(&mut self, line: &str) {
+        use tokio::io::AsyncWriteExt;
+        let payload = line.as_bytes();
+        assert!(payload.len() < 126, "test lines stay in the 7-bit length");
+        let mask = [0x21u8, 0x43, 0x65, 0x87];
+        let mut frame = vec![0x81u8, 0x80 | payload.len() as u8];
+        frame.extend_from_slice(&mask);
+        frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        self.io.write_all(&frame).await.unwrap();
+    }
+
+    /// Read one server frame, returning `(opcode, payload)`.
+    async fn recv_frame(&mut self) -> (u8, Vec<u8>) {
+        use tokio::io::AsyncReadExt;
+        let mut header = [0u8; 2];
+        self.io.read_exact(&mut header).await.unwrap();
+        let opcode = header[0] & 0x0f;
+        let masked = header[1] & 0x80 != 0;
+        let len7 = (header[1] & 0x7f) as usize;
+        let len = if len7 < 126 {
+            len7
+        } else if len7 == 126 {
+            let mut l = [0u8; 2];
+            self.io.read_exact(&mut l).await.unwrap();
+            u16::from_be_bytes(l) as usize
+        } else {
+            let mut l = [0u8; 8];
+            self.io.read_exact(&mut l).await.unwrap();
+            u64::from_be_bytes(l) as usize
+        };
+        let mask = if masked {
+            let mut m = [0u8; 4];
+            self.io.read_exact(&mut m).await.unwrap();
+            Some(m)
+        } else {
+            None
+        };
+        let mut payload = vec![0u8; len];
+        self.io.read_exact(&mut payload).await.unwrap();
+        if let Some(m) = mask {
+            for (i, b) in payload.iter_mut().enumerate() {
+                *b ^= m[i % 4];
+            }
+        }
+        (opcode, payload)
+    }
+}
+
+#[tokio::test]
+async fn websocket_transport_registers_and_delivers() {
+    let ctx = test_context();
+    let max_line = ctx.max_line;
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let peer = "127.0.0.1:9660".parse().unwrap();
+    tokio::spawn(async move {
+        let ws = ferrixd::websocket::accept(server_io, max_line)
+            .await
+            .expect("ws handshake");
+        ferrixd::connection::serve(ws, peer, ctx, None, false).await;
+    });
+
+    let mut client = WsTestClient::connect(client_io, "text.ircv3.net").await;
+
+    // Each IRC line is one WebSocket message, with no trailing CRLF.
+    client.send_line("NICK alice").await;
+    client.send_line("USER alice 0 * :Alice").await;
+
+    // Read framed messages until RPL_WELCOME comes back over the socket.
+    let mut saw_welcome = false;
+    for _ in 0..50 {
+        let (opcode, payload) = tokio::time::timeout(Duration::from_secs(3), client.recv_frame())
+            .await
+            .expect("ws read timeout");
+        if opcode == 0x1 || opcode == 0x2 {
+            let text = String::from_utf8_lossy(&payload);
+            assert!(
+                !text.ends_with('\n') && !text.ends_with('\r'),
+                "WebSocket frame must not carry CRLF: {text:?}"
+            );
+            if text.contains(" 001 ") {
+                saw_welcome = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_welcome, "no RPL_WELCOME received over WebSocket");
 }
 
 /// Permissive certificate verifier for the test client only.

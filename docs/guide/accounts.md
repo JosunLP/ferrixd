@@ -143,6 +143,17 @@ Long payloads are chunked in 400-byte `AUTHENTICATE` lines per the spec; the
 server bounds the accumulated buffer at 8192 bytes (`ERR_SASLTOOLONG`
 beyond that).
 
+### Reauthentication
+
+A client that negotiated `sasl` may run `AUTHENTICATE` again **after**
+registration to switch to (or add) an account, without reconnecting (IRCv3
+SASL 3.2). The exchange is identical to the one above — the same `900`/`903`
+confirm the new login. On success the new account replaces the old (and
+co-members with `account-notify` see the `ACCOUNT` change); a **failed**
+attempt is rejected with `904 ERR_SASLFAIL` and the existing login is kept.
+During the initial handshake, by contrast, a client may authenticate only
+once (`907 ERR_SASLALREADY`).
+
 ## Self-registration: `REGISTER`
 
 With the `draft/account-registration` capability, users can create their own

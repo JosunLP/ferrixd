@@ -40,8 +40,15 @@ pub struct Session {
     pub sasl: SaslSession,
     /// Whether registration has completed.
     pub registered: bool,
+    /// Whether `RPL_ISUPPORT` has already been sent (draft/extended-isupport
+    /// sends it during CAP negotiation; the registration burst then skips it).
+    pub isupport_sent: bool,
     /// Set by a handler to end the connection with this quit reason.
     pub quit: Option<String>,
+    /// Whether any command (or numeric) has been received on this connection —
+    /// set structurally in dispatch to enforce the WEBIRC first-command
+    /// contract (a successful WEBIRC sets it too, refusing a second one).
+    pub first_command_received: bool,
     /// An in-progress inbound `draft/multiline` batch, if any.
     pub multiline: Option<MultilineBatch>,
     /// When a labeled command is in progress, its label and a buffer capturing
@@ -90,7 +97,9 @@ impl Session {
             cap_version: 0,
             sasl: SaslSession::default(),
             registered: false,
+            isupport_sent: false,
             quit: None,
+            first_command_received: false,
             multiline: None,
             label: RefCell::new(None),
             label_buffer: RefCell::new(None),
@@ -436,12 +445,18 @@ impl Session {
         // Channel modes advertised in MYINFO derive from the single BOOL_MODES
         // table plus the parameterised key/limit modes.
         let chanmodes = format!("{}kl", state::bool_mode_letters());
+        let umodes = format!("iow{}", crate::command::BOT_UMODE);
         self.numeric(
             RPL_MYINFO,
-            &[&info.name, &info.version, "iow", &chanmodes],
+            &[&info.name, &info.version, &umodes, &chanmodes],
             None,
         );
-        self.send_isupport();
+        // draft/extended-isupport may have already sent this during CAP
+        // negotiation; the spec lets the registration burst skip it then.
+        if !self.isupport_sent {
+            self.send_isupport();
+            self.isupport_sent = true;
+        }
         self.send_lusers();
         self.send_motd();
 
@@ -461,7 +476,7 @@ impl Session {
         // CHANMODES type groups: A=list (b,e,I), B=always-param (k), C=param-when-set
         // (l), D=boolean (derived from the single BOOL_MODES table).
         let chanmodes = format!("CHANMODES=beI,k,l,{}", state::bool_mode_letters());
-        let tokens: Vec<String> = vec![
+        let mut tokens: Vec<String> = vec![
             "CHANTYPES=#".to_owned(),
             chanmodes,
             "PREFIX=(ov)@+".to_owned(),
@@ -470,6 +485,8 @@ impl Session {
             format!("MODES={}", crate::command::MAX_MODE_CHANGES),
             "EXCEPTS=e".to_owned(),
             "INVEX=I".to_owned(),
+            // Account extban (`~a:<account>`), honoured in +b/+e/+I matching.
+            "EXTBAN=~,a".to_owned(),
             "MAXLIST=b:100,e:100,I:100".to_owned(),
             "MONITOR=100".to_owned(),
             "WATCH=100".to_owned(),
@@ -490,9 +507,14 @@ impl Session {
             "KNOCK".to_owned(),
             "STATUSMSG=@+".to_owned(),
             "UTF8ONLY".to_owned(),
+            format!("BOT={}", crate::command::BOT_UMODE),
             format!("CASEMAPPING={}", info.casemapping.isupport_token()),
             format!("NETWORK={}", info.network),
         ];
+        // draft/network-icon: advertise the network's icon URL when configured.
+        if let Some(icon) = &info.icon {
+            tokens.push(format!("draft/ICON={icon}"));
+        }
         for chunk in tokens.chunks(13) {
             let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
             self.numeric(RPL_ISUPPORT, &refs, Some("are supported by this server"));

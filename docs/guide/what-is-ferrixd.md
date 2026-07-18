@@ -17,7 +17,7 @@ A single static binary that is:
 - **A complete IRC server.** Registration, channels, modes, topics, WHO/WHOIS,
   MOTD, LUSERS, MONITOR, LIST — the full classic surface, with consistent
   `ascii` or `rfc1459` case mapping.
-- **An IRCv3 server.** 26 capabilities, including `server-time`,
+- **An IRCv3 server.** 29 capabilities, including `server-time`,
   `message-tags`, `batch`, `echo-message`, `labeled-response`,
   `standard-replies`, `draft/chathistory`, `draft/multiline`, and
   `draft/metadata-2`. Capabilities are implemented against the spec text, not

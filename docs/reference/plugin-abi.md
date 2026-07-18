@@ -34,6 +34,8 @@ complete Rust example: [WASM Plugins guide](/guide/plugins).
 | `ferrix_on_message(ptr: i32, len: i32) -> i32` | raw message text (v1) | `0` = allow, non-zero = block |
 | `ferrix_on_message_v2(ptr: i32, len: i32) -> i32` | JSON `{"source":"<nick>","target":"<#channel>","text":"<text>"}` | `0` = allow, non-zero = block |
 | `ferrix_on_join(ptr: i32, len: i32) -> i32` | JSON `{"nick":"<nick>","channel":"<#channel>"}` | `0` = allow, non-zero = reject join |
+| `ferrix_on_nick(ptr: i32, len: i32) -> i32` | JSON `{"old":"<old-nick>","new":"<new-nick>"}` | `0` = allow, non-zero = reject nick change |
+| `ferrix_on_topic(ptr: i32, len: i32) -> i32` | JSON `{"nick":"<nick>","channel":"<#channel>","topic":"<text>"}` | `0` = allow, non-zero = reject topic change |
 
 Rules:
 
@@ -41,11 +43,17 @@ Rules:
   **only v2 is called**.
 - Message hooks fire for every channel `PRIVMSG`/`NOTICE` this node
   delivers — locally originated **and** relayed over S2S.
+- `ferrix_on_nick` fires for a **registered** client's nick change (not for
+  the nick chosen during the initial handshake); `ferrix_on_topic` fires
+  for a `TOPIC` that sets a new topic, after the channel's own permission
+  checks.
 - Plugins are consulted in load order; the **first block short-circuits**
   (later plugins don't see the event).
 - A blocked message is not delivered, not echoed, and not recorded in
   history; the sender receives `FAIL PRIVMSG MSG_BLOCKED` (or the NOTICE
-  fallback). A blocked join yields `FAIL JOIN JOIN_BLOCKED`.
+  fallback). A blocked join yields `FAIL JOIN JOIN_BLOCKED`. A blocked nick
+  change yields `432 ERR_ERRONEUSNICKNAME`; a blocked topic yields
+  `FAIL TOPIC TOPIC_BLOCKED`.
 
 ## Host imports
 

@@ -114,7 +114,9 @@ capabilities are required at all.
 
 ### 4. Certificate renewal
 
-`REHASH` does not reload TLS material, so renewals need a restart:
+`REHASH` reloads the certificate and key in place — no restart, no dropped
+connections — so a renewal hook just refreshes the PEMs and triggers a
+`REHASH`:
 
 ```sh
 # /etc/letsencrypt/renewal-hooks/deploy/ferrixd
@@ -123,10 +125,15 @@ install -o root -g ferrixd -m 640 \
     /etc/letsencrypt/live/irc.example.org/privkey.pem /etc/ferrixd/privkey.pem
 install -o root -g ferrixd -m 644 \
     /etc/letsencrypt/live/irc.example.org/fullchain.pem /etc/ferrixd/fullchain.pem
-systemctl restart ferrixd
+# Then REHASH (e.g. via your oper tooling). A bad PEM fails the reload and
+# leaves the previous certificate armed, so the listener never goes dark.
 ```
 
-With persistence enabled, a restart costs a reconnect, not history.
+An established outbound S2S link keeps the certificate it handshook with until
+it reconnects. `REHASH` rebuilds the TLS client configuration for **every**
+outbound link, so the reloaded certificate is presented on the next (re)connect
+— whether that is the automatic reconnect loop after a drop, an operator
+`CONNECT`, or a `SQUIT` + `CONNECT` forcing it immediately.
 
 ## Docker Compose
 
@@ -188,7 +195,7 @@ restart picks it up. For Docker: rebuild/pull the image, `docker compose up
 ## Pre-flight checklist
 
 - [ ] `ferrixd check` passes as the service user
-- [ ] TLS: real certs, renewal hook restarts the service
+- [ ] TLS: real certs, renewal hook refreshes the PEMs and triggers `REHASH`
 - [ ] `[persistence]` on, database on durable storage, backup cronjob
 - [ ] `[metrics]` on loopback, Prometheus scraping, an alert or two
 - [ ] `[[operators]]` use `password_hash`, one block per human

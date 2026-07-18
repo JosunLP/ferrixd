@@ -91,9 +91,32 @@ the handshake.
 
 ### 4. Restart and watch
 
-Restart both servers (link config is not `REHASH`-able). The dialing side
-retries every 30 seconds until the link is up, and re-dials automatically
-after any drop. In the logs you'll see the handshake, then the **burst**.
+Restart both servers to start the config-driven auto-dial loops. The
+dialing side retries every 30 seconds until the link is up, and re-dials
+automatically after any drop. In the logs you'll see the handshake, then
+the **burst**.
+
+### Managing links at runtime
+
+You don't have to restart to touch a link once the server is running:
+
+- **`CONNECT <name>`** dials a configured peer immediately (one attempt).
+  Use it to bring up a link you just added — `REHASH` first so the new
+  `[[links]]` block is loaded and the TLS client configuration is refreshed,
+  then `CONNECT <name>`.
+- **`SQUIT <server> [:reason]`** disconnects a directly-linked peer, by
+  server name or SID. The peer and everything reachable through it split
+  off through the normal netsplit path. A `SQUIT` also stops the boot-time
+  auto-dial loop for that peer — the link stays down until an operator
+  `CONNECT`s it again (which clears the mark).
+
+Both are operator commands (`481 ERR_NOPRIVILEGES` without the flag;
+`402 ERR_NOSUCHSERVER` for an unknown name). `REHASH` refreshes the stored
+`[[links]]` definitions and rebuilds the TLS client configuration, so
+`CONNECT` sees edits and uses updated certificates. The auto-dial loops
+pick up refreshed definitions on their next reconnect attempt and stop
+for links removed from the config; `REHASH` does not start a loop for a
+newly added link — use `CONNECT` to dial it.
 
 ## What happens at link-up
 

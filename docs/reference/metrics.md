@@ -30,6 +30,19 @@ The three disconnect counters correspond one-to-one to the
 [DoS controls](/internals/security#dos-controls) and to identically-worded
 log lines — metrics and logs always agree on why a client left.
 
+## Histograms
+
+| Metric | Help |
+| --- | --- |
+| `ferrixd_command_duration_seconds` | Command handler latency, per command |
+
+`ferrixd_command_duration_seconds` is a per-command histogram of how long the
+handler took, carrying a `command` label. Buckets (seconds): `5e-05`, `0.0001`,
+`0.00025`, `0.0005`, `0.001`, `0.005`, `0.025`, `0.1`, `+Inf`; the usual
+`_bucket`, `_sum`, and `_count` series are emitted. Label cardinality is
+**bounded**: unknown or unhandled verbs collapse to `command="other"`, so a
+client sending arbitrary command names cannot inflate the series set.
+
 ## Endpoint behavior
 
 - Plain HTTP/1.1, hand-rolled responder — every request path returns the
@@ -54,4 +67,7 @@ rate(ferrixd_registration_timeouts_total[5m])
 
 # population trend
 ferrixd_clients
+
+# p99 handler latency per command (needs a scrape range)
+histogram_quantile(0.99, sum by (le, command) (rate(ferrixd_command_duration_seconds_bucket[5m])))
 ```

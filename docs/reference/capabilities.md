@@ -1,6 +1,6 @@
 # IRCv3 Capabilities
 
-ferrixd advertises **26 capabilities** in `CAP LS 302` (plus `sts` when a
+ferrixd advertises **29 capabilities** in `CAP LS 302` (plus `sts` when a
 policy is configured), implemented against the
 [IRCv3 specifications](https://ircv3.net/ircv3.html). Negotiation
 notes:
@@ -36,6 +36,7 @@ notes:
 | `standard-replies` | ratified | machine-readable `FAIL`/`WARN`/`NOTE` — [codes ferrixd emits](/reference/commands#standard-replies-fail) |
 | `account-notify` | ratified | login/logout of channel members broadcast as `ACCOUNT` |
 | `extended-monitor` | ratified | `MONITOR` watchers also receive `AWAY`/`ACCOUNT`/`SETNAME`/`CHGHOST` for monitored nicks (each gated on the matching cap) |
+| `no-implicit-names` | ratified | suppress the automatic `NAMES` reply on `JOIN` (explicit `NAMES` still answers) — faster joins for clients that don't need member lists |
 | `sts` | ratified | strict transport security policy (`[server].sts` config); advertised per connection, never `REQ`able |
 | `draft/chathistory` | draft | server-side history replay — [reference](/reference/chathistory) |
 | `draft/metadata-2` | draft | key-value metadata on users and channels via `METADATA`, incl. `SUB`/`UNSUB`/`SUBS` subscriptions and push notifications when a subscribed key changes |
@@ -45,6 +46,21 @@ notes:
 | `draft/event-playback` | draft | `CHATHISTORY` also replays JOIN/PART/QUIT/NICK/KICK/TOPIC/MODE events |
 | `draft/message-redaction` | draft | delete sent messages from history via `REDACT` (author or channel op), federated over S2S |
 | `draft/channel-rename` | draft | rename channels in place via `RENAME`; non-supporting members get a PART/JOIN resync |
+| `draft/pre-away` | draft | set `AWAY` before registration completes (bouncers, multi-connection clients) |
+| `draft/extended-isupport` | draft | receive `RPL_ISUPPORT` during CAP negotiation, before `RPL_WELCOME` |
+
+## Server features that are not capabilities
+
+Some IRCv3 server features are advertised through `ISUPPORT` or user modes
+rather than `CAP`, so clients never `REQ` them:
+
+| Feature | Advertised as | Notes |
+| --- | --- | --- |
+| Bot mode | `ISUPPORT BOT=B`, umode `+B` | a user sets `MODE <nick> +B` to declare itself a bot; shown in `WHOIS` (`RPL_WHOISBOT`, 335), the `WHO` flags, and a bare `@bot` message tag on its messages (for `message-tags` clients). Synced across S2S links |
+| UTF8ONLY | `ISUPPORT UTF8ONLY` | the wire protocol is UTF-8-validated at parse time, so non-UTF-8 content is never relayed |
+| Network icon | `ISUPPORT draft/ICON=<url>` | set via `[server].icon`; a URL (ideally HTTPS, square) to the network's icon, with an optional `{size}` template |
+| WEBIRC | `WEBIRC` command | trusted gateways (`[[webirc]]`) rewrite a client's apparent host/IP after a constant-time password check and a source-address allow-list |
+| WebSockets | `ws://` / `wss://` listeners | `ws_bind`/`wss_bind`; negotiates the `text.ircv3.net` and `binary.ircv3.net` subprotocols, one IRC line per WebSocket message |
 
 ## A note on tagged delivery
 
@@ -74,4 +90,4 @@ Draft capabilities (`draft/` prefix) track their specifications; when a
 draft is ratified, ferrixd will advertise the ratified name (and, per
 `cap-notify`, connected clients learn about it live). Clients that
 negotiate nothing get a well-behaved RFC 1459 server — every modern
-behavior is opt-in via CAP.
+capability-negotiated behavior is opt-in via CAP.

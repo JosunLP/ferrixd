@@ -1,8 +1,10 @@
 # Roadmap
 
-ferrixd reached **1.0.0** — the first stable release. This page records what
-that release contains, what the stability promise covers, and what may come
-next.
+ferrixd reached **1.0.0** — the first stable release — and **1.1.0** extends it
+(IRC over WebSockets, WEBIRC, bot-mode, live link management, TLS reload, and
+more; see the [changelog](https://github.com/josunlp/ferrixd/blob/main/CHANGELOG.md)).
+This page records what the current release contains, what the stability promise
+covers, and what may come next.
 
 ## Stability promise (1.x)
 
@@ -24,10 +26,12 @@ Two deliberate exceptions:
 - **The Rust library APIs** (`ferrixd`, `ferrix-protocol`) are not covered. The
   daemon is the product; the crates are its implementation.
 
-## What 1.0 contains
+## What ferrixd contains
 
-- **Protocol surface**: the RFC core plus 26 IRCv3 capabilities
-  ([list](/reference/capabilities)) — what the server advertises, it enforces.
+- **Protocol surface**: the RFC core plus 29 IRCv3 capabilities
+  ([list](/reference/capabilities)) — what the server advertises, it enforces —
+  plus non-capability features (bot-mode, WEBIRC, UTF8ONLY, network-icon) and
+  IRC over WebSockets (`ws://`/`wss://`).
 - **Federation**: complete state synchronization across multi-hop link trees
   with loop prevention and TS-based netjoin resolution
   ([protocol](/reference/s2s-protocol)), plus a
@@ -42,19 +46,41 @@ Two deliberate exceptions:
 - **Releases**: prebuilt binaries for 7 targets with a checksum-verifying
   installer ([installation](/guide/installation)).
 
+## Since 1.0
+
+Work that has landed on top of 1.0 — most of it former Horizon items — while
+holding the 1.x stability promise:
+
+- **SASL reauthentication.** A registered client that negotiated `sasl` may
+  re-run `AUTHENTICATE` mid-session to switch (or add) an account. The new login
+  replaces the old on success; a failed attempt leaves the existing login
+  untouched.
+- **Richer plugin hooks.** The WASM host now also observes and can veto **nick
+  changes** (`ferrix_on_nick`) and **topic changes** (`ferrix_on_topic`), on the
+  same fail-open ABI as messages and joins
+  ([reference](/reference/plugin-abi)).
+- **Live link management.** Operators can bring S2S links up and down at
+  runtime with `CONNECT <name>` and `SQUIT <server> [:reason]`, beyond the
+  config-driven links started at boot.
+- **Per-command metric histograms.** `/metrics` now exposes
+  `ferrixd_command_duration_seconds`, a per-command handler-latency histogram
+  (bounded label cardinality: known verbs plus `other`).
+- **TLS reload without restart.** `REHASH` now reloads the certificate and key
+  for every TLS listener (client, `wss://`, and S2S) without dropping the
+  process or any live connection; a bad reload leaves the previous material
+  armed.
+
 ## Horizon
 
 Direction, not commitment:
 
 - **Draft-spec tracking.** The `draft/*` capabilities follow their specs;
   ratified names are adopted as they land.
-- **SASL reauthentication.** Mid-session `AUTHENTICATE` is not supported today.
-- **Richer plugin hooks.** The WASM host currently vetoes messages and joins;
-  more events (nick changes, topic changes, moderation actions) are a natural
-  extension of the same ABI.
-- **Operational conveniences.** Live link management (beyond config-driven),
-  per-command metric histograms, and TLS reload without restart are recurring
-  candidates.
+- **Even richer plugin hooks.** Nick and topic events are covered; moderation
+  actions (kick, mode, kline) are the natural next extension of the same ABI.
+- **Outbound-link certificate reload.** TLS reload covers the listeners today;
+  rotating the certificate an *existing outbound* link presents still needs a
+  re-link (`SQUIT` + `CONNECT`).
 
 If you want to influence any of this, open an issue —
 [GitHub](https://github.com/josunlp/ferrixd/issues).

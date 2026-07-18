@@ -36,6 +36,7 @@ What you get (full catalogue with types: [Metrics reference](/reference/metrics)
 | `ferrixd_sendq_drops_total` | clients too slow to drain their queue |
 | `ferrixd_flood_disconnects_total` | rate-limit kills — abuse or a broken bot |
 | `ferrixd_registration_timeouts_total` | connect-and-stall behavior, port scans |
+| `ferrixd_command_duration_seconds` | per-command handler latency (histogram, `command` label) |
 
 The three `…_total` disconnect counters map one-to-one to the
 [DoS controls](/internals/security#dos-controls): SendQ overflow, token

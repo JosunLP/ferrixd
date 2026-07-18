@@ -14,7 +14,7 @@ TLS-first, federated over mutual TLS, and load-tested to
 [![CI](https://github.com/josunlp/ferrixd/actions/workflows/ci.yml/badge.svg)](https://github.com/josunlp/ferrixd/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-stable-d4581e?logo=rust&logoColor=white)
 ![unsafe_code](https://img.shields.io/badge/unsafe__code-forbid-1b1815)
-![IRCv3](https://img.shields.io/badge/IRCv3-26_capabilities-d4581e)
+![IRCv3](https://img.shields.io/badge/IRCv3-29_capabilities-d4581e)
 ![License](https://img.shields.io/badge/license-MIT_%2F_Apache--2.0-1b1815)
 
 **[📖 Documentation](https://josunlp.github.io/ferrixd/)** ·
@@ -32,10 +32,11 @@ afternoon. What it never had was a server built like it matters — memory-safe,
 spec-complete, hostile-input-proof, and honest about persistence. **ferrixd**
 is that server: element 26, oxidised into software.
 
-**Version 1.0.0** is complete and [stable](#stability): a security-hardened,
-IRCv3 server with persistent message history, a federated server-to-server mesh,
-a sandboxed WASM plugin host, and a demonstrated density of ~100k concurrent
-connections per node. The
+**Version 1.1.0** builds on the stable 1.0 line: a security-hardened, IRCv3
+server with persistent message history, a federated server-to-server mesh, a
+sandboxed WASM plugin host, and a demonstrated density of ~100k concurrent
+connections per node — now also reachable over WebSockets, with WEBIRC gateway
+support, bot-mode, live link management, and TLS reload without a restart. The
 [documentation](https://josunlp.github.io/ferrixd/) (source in
 [`docs/`](docs/), deployed via GitHub Pages) covers installation, the full
 configuration and command reference, operators, federation, and the plugin API
@@ -58,7 +59,7 @@ constant time.
 </td>
 <td width="33%" valign="top">
 <b>📡 IRCv3-complete</b><br>
-26 negotiable capabilities, from <code>server-time</code> and
+29 negotiable capabilities, from <code>server-time</code> and
 <code>message-tags</code> to <code>draft/chathistory</code> and
 <code>labeled-response</code>.
 </td>
@@ -220,13 +221,21 @@ worker-thread count (one async task per connection, not one OS thread) — see
 `extended-join` · `chghost` · `setname` · `multi-prefix` ·
 `userhost-in-names` · `cap-notify` · `invite-notify` · `batch` ·
 `labeled-response` · `standard-replies` · `extended-monitor` ·
-`draft/chathistory` · `draft/metadata-2` · `draft/multiline` ·
-`draft/account-registration` · `draft/read-marker` ·
+`no-implicit-names` · `draft/chathistory` · `draft/metadata-2` ·
+`draft/multiline` · `draft/account-registration` · `draft/read-marker` ·
 `draft/event-playback` · `draft/message-redaction` ·
-`draft/channel-rename`
+`draft/channel-rename` · `draft/pre-away` · `draft/extended-isupport`
 
 Plus `sts` (strict transport security): advertised per connection when a policy
-is configured, but never `REQ`able — so it is not counted among the 26.
+is configured, but never `REQ`able — so it is not counted among the 29.
+
+Beyond the negotiable set, ferrixd also implements the IRCv3 server features that
+are **not** capabilities: **bot-mode** (`ISUPPORT BOT=B`, umode `+B`, `RPL_WHOISBOT`,
+the WHO `B` flag, and a bare `@bot` message tag), **WEBIRC** (trusted gateways may
+rewrite a client's apparent host/IP), **UTF8ONLY** (the whole wire protocol is
+UTF-8-validated, so non-UTF-8 content is never relayed), **`draft/ICON`**
+(network-icon), and **IRC over WebSockets** (`ws://`/`wss://`, negotiating the
+`text.ircv3.net` and `binary.ircv3.net` subprotocols).
 
 ## Installing
 
@@ -264,7 +273,7 @@ irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 |
 Defaults: binaries land in `/usr/local/bin` (as root) or `~/.local/bin`
 (as user) — `$PREFIX/bin` on Termux, `%LOCALAPPDATA%\Programs\ferrixd` on
 Windows (added to the user `PATH`). Pin a version with
-`sh -s -- install --version v1.0.0` (PowerShell: `... install v1.0.0`);
+`sh -s -- install --version v1.1.0` (PowerShell: `... install v1.1.0`);
 override the directory with `--dir`/`-Dir` or `$FERRIXD_INSTALL_DIR`.
 
 Cutting a release: bump `version` in `Cargo.toml`, then publish a GitHub Release

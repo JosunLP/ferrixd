@@ -12,8 +12,9 @@ Legend: **○** available pre-registration · **⚙** requires IRC operator ·
 | Command | | Description |
 | --- | --- | --- |
 | `CAP LS 302` / `REQ` / `END` / `LIST` | ○ | capability negotiation; `REQ` is all-or-nothing — one unknown token NAKs the whole request |
-| `AUTHENTICATE <mech\|payload\|*>` | ○ | SASL (`PLAIN`, `EXTERNAL`, `SCRAM-SHA-256`); 400-byte chunking; `*` aborts |
+| `AUTHENTICATE <mech\|payload\|*>` | ○ | SASL (`PLAIN`, `EXTERNAL`, `SCRAM-SHA-256`); 400-byte chunking; `*` aborts. A registered `sasl` client may re-run it to switch/add an account (SASL 3.2 reauth); a failed attempt keeps the current login |
 | `PASS <password>` | ○ | connection password; required before registration completes when `[server].password` is configured (464 otherwise) |
+| `WEBIRC <password> <gateway> <host> <ip> [opts]` | ○ | trusted gateway spoofs a client's host/IP; must be the connection's first command, from an allow-listed source, with a matching secret ([`[[webirc]]`](/reference/config#webirc-optional-repeatable)) |
 | `NICK <nick>` | ○ | set/change nick (≤ 30 chars; refused if held anywhere on the network) |
 | `USER <user> 0 * :<realname>` | ○ | complete registration |
 | `PING <token>` / `PONG` | ○ | keepalive (client `PONG` answers the server's idle ping) |
@@ -27,7 +28,7 @@ Legend: **○** available pre-registration · **⚙** requires IRC operator ·
 | `NOTICE <target> :<text>` | | as PRIVMSG, but never generates automatic replies |
 | `TAGMSG <target>` | | client-tags-only message (reactions, typing indicators) — requires `message-tags` |
 | `BATCH +<ref> <type>` … `BATCH -<ref>` | | client-initiated batches; `draft/multiline` batches are accepted (≤ 100 lines) |
-| `AWAY [:<reason>]` | | set/clear away state (`away-notify` broadcasts to common channels; propagated over S2S) |
+| `AWAY [:<reason>]` | ○ | set/clear away state (`away-notify` broadcasts to common channels; propagated over S2S); with `draft/pre-away`, accepted before registration completes |
 | `SETNAME :<realname>` | | change realname live (`setname` cap; propagated over S2S) |
 
 STATUSMSG: `PRIVMSG`/`NOTICE` to `@#chan` or `+#chan` deliver only to
@@ -103,7 +104,9 @@ All require the oper flag; without it: `481 ERR_NOPRIVILEGES`. Guide:
 | `CHGHOST <nick> <user> <host>` | change a user's displayed user@host (`chghost` cap broadcast; propagated over S2S) |
 | `WALLOPS :<text>` | broadcast to all `+w` users, network-wide |
 | `GLOBOPS :<text>` (`OPERWALL`) | the same broadcast, marked `[GLOBOPS]` |
-| `REHASH` | hot-reload accounts, operators, bans, MOTD, connection password (382) |
+| `REHASH` | hot-reload accounts, operators, bans, MOTD, connection password, WEBIRC, link definitions, and TLS certificate/key — no restart, no dropped connections (382) |
+| `CONNECT <name>` | bring up a configured S2S link at runtime (one attempt); `402 ERR_NOSUCHSERVER` if the name is not a configured `[[links]]` peer |
+| `SQUIT <server> [:reason]` | disconnect a directly-linked peer (by name or SID); the peer and the subtree behind it split off; `402` if not directly linked |
 | `DIE` | graceful shutdown of this server (announced via WALLOPS) |
 
 ## Standard replies (`FAIL`)
@@ -118,6 +121,7 @@ cap, the same content falls back to a server `NOTICE`. Codes ferrixd emits:
 | `CHATHISTORY` | `NEED_MORE_PARAMS`, `INVALID_TARGET`, `INVALID_PARAMS` |
 | `JOIN` | `JOIN_BLOCKED` (plugin veto) |
 | `PRIVMSG`/`NOTICE` | `MSG_BLOCKED` (plugin veto) |
+| `TOPIC` | `TOPIC_BLOCKED` (plugin veto) |
 | `METADATA` | `INVALID_PARAMS`, `INVALID_TARGET`, `KEY_NOT_SET`, `KEY_INVALID`, `VALUE_INVALID`, `KEY_NO_PERMISSION`, `TOO_MANY_SUBS` |
 | `MARKREAD` | `NEED_MORE_PARAMS`, `INVALID_PARAMS` |
 | `REDACT` | `NEED_MORE_PARAMS`, `INVALID_TARGET`, `UNKNOWN_MSGID`, `REDACT_FORBIDDEN` |
@@ -126,9 +130,9 @@ cap, the same content falls back to a server `NOTICE`. Codes ferrixd emits:
 
 ## Not implemented
 
-By design (config-driven federation, no legacy surface): `CONNECT`,
-`SQUIT` (as a client command), `TRACE`, `WEBIRC`, `RESTART` (use your
-service manager). S2S links are managed entirely through `[[links]]` in
-the [configuration](/reference/config#links-optional-repeatable). The
+By design (no legacy surface): `TRACE`, `RESTART` (use your service
+manager). S2S links are still *defined* through `[[links]]` in the
+[configuration](/reference/config#links-optional-repeatable); operators
+bring them up and down at runtime with `CONNECT`/`SQUIT` (above). The
 obsolete RFC verbs `SUMMON`, `USERS`, `SERVICE`, `SERVLIST` and `SQUERY`
 are also absent.

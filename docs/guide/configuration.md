@@ -60,6 +60,13 @@ tls_bind = "0.0.0.0:6697"
 - `motd` is a list of lines, no file needed. Reloadable with
   [`REHASH`](/guide/operators#rehash).
 
+- `icon` (optional) advertises a network icon URL to clients that support it
+  (IRCv3 `draft/network-icon`, sent as `ISUPPORT draft/ICON=`):
+
+```toml
+icon = "https://examplenet.org/icon.svg"
+```
+
 **Plaintext**, if you really need it, is loopback-only by design:
 
 ```toml
@@ -67,6 +74,18 @@ plain_bind = "127.0.0.1:6667"
 # binding plain_bind to a non-loopback address is a config ERROR unless:
 # allow_plain_nonlocal = true
 ```
+
+**WebSockets** let browser clients connect natively (no gateway):
+
+```toml
+wss_bind = "0.0.0.0:443"        # secure; terminates TLS with the [tls] cert
+ws_bind  = "127.0.0.1:8080"     # plaintext; loopback-only (same rule as plain_bind)
+```
+
+`wss_bind` is the browser-facing form and reuses the `[tls]` certificate (and
+its `REHASH` reloads). Each IRC line is one WebSocket message; the server
+negotiates the `text.ircv3.net`/`binary.ircv3.net` subprotocols. See
+[TLS → WebSocket transport](/guide/tls#websocket-transport-ws-wss).
 
 **Host cloaking** hides user hostnames behind an unforgeable HMAC:
 
@@ -160,6 +179,22 @@ reason = "Banned network"
 
 Matched at registration; reloadable with `REHASH`.
 
+### `[[webirc]]` — trusted WEBIRC gateways
+
+Let a web/IRC gateway present a client's real host and IP (so users behind it
+are seen and moderated by their own address, not the gateway's):
+
+```toml
+[[webirc]]
+name = "kiwi"                        # matched against the WEBIRC <gateway> field
+password = "long-random-shared-secret"
+hosts = ["127.0.0.1", "10.0.0.*"]   # source addresses the gateway may use
+```
+
+A `WEBIRC` is honoured only as the connection's first command, from an
+allow-listed source, with a matching secret (compared in constant time); the
+spoofed IP is then re-checked against D-lines. Reloadable with `REHASH`.
+
 ### `[persistence]` — SQLite durability
 
 ```toml
@@ -208,9 +243,11 @@ See [Federation](/guide/federation) for the full linking walkthrough.
 ## Reloading without restarting
 
 `REHASH` (oper-only) re-reads the config file and applies the reloadable
-subset — **accounts, operators, bans, and the MOTD** — without dropping a
-single connection. Listener addresses, TLS material, and limits require a
-restart. See [Operators & Moderation](/guide/operators#rehash).
+subset — **accounts, operators, bans, the MOTD, WEBIRC gateways, the
+connection password, and the TLS certificate/key** — without dropping a
+single connection. Listener bind addresses and limits still require a
+restart. See [what `REHASH` reloads](/reference/config#what-rehash-reloads)
+and [Operators & Moderation](/guide/operators#rehash).
 
 ## Validating in CI
 

@@ -17,6 +17,11 @@ name = "irc.example.test"
 # Advertised network name (ISUPPORT NETWORK).
 network = "ferrixnet"
 
+# Optional network icon URL (IRCv3 draft/network-icon), advertised as the
+# `draft/ICON` ISUPPORT token. Use an HTTPS URL to a (preferably square) image;
+# a literal `{size}` in the URL is passed through for clients to substitute.
+# icon = "https://example.org/icon.svg"
+
 # Network-wide case folding for nicks/channels: "ascii" (default) or "rfc1459".
 casemapping = "ascii"
 
@@ -42,6 +47,12 @@ tls_bind = "0.0.0.0:6697"
 # `allow_plain_nonlocal = true` below.
 # plain_bind = "127.0.0.1:6667"
 # allow_plain_nonlocal = false
+
+# IRC over WebSockets (IRCv3). `wss_bind` reuses the [tls] certificate and is the
+# recommended form for browser clients. `ws_bind` is plaintext and — like
+# `plain_bind` — loopback-only unless `allow_plain_nonlocal = true`.
+# wss_bind = "0.0.0.0:443"
+# ws_bind  = "127.0.0.1:8080"
 
 # Optional connection password: clients must send `PASS <password>` before
 # completing registration (rejected with 464 otherwise).
@@ -131,6 +142,16 @@ recv_rate = 10
 # [[bans]]
 # mask = "*!*@203.0.113.0/24"     # nick!user@host glob (* and ?)
 # reason = "Banned network"
+
+# --- Trusted WEBIRC gateways (IRCv3 WEBIRC) ---
+# A web/IRC gateway may rewrite a client's apparent host and IP so users behind
+# it are seen (and moderated) by their real address. A gateway must present the
+# shared password AND connect from one of the `hosts` globs; both are checked
+# (the password in constant time) before any rewrite. Empty = WEBIRC disabled.
+# [[webirc]]
+# name = "kiwi"                    # matched against the WEBIRC <gateway> field
+# password = "long-random-shared-secret"
+# hosts = ["127.0.0.1", "10.0.0.*"]  # source-address globs the gateway may use
 
 # --- Durable persistence (SQLite; optional) ---
 # When set, chathistory AND channel registrations survive restarts (they share

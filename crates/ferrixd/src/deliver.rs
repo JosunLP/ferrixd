@@ -36,6 +36,9 @@ pub struct Event {
     /// `draft/multiline` clients see the lines grouped in a batch, everyone else
     /// gets plain messages (the spec's fallback).
     batch: Option<(Cap, String)>,
+    /// IRCv3 bot-mode: when the source is a bot (`+B`), a bare `@bot` tag is
+    /// added for recipients with `message-tags`.
+    bot: bool,
 }
 
 impl Event {
@@ -50,7 +53,16 @@ impl Event {
             client_tags: None,
             suffix: None,
             batch: None,
+            bot: false,
         }
+    }
+
+    /// Mark this event as originating from a bot (`+B`), so a bare `@bot` tag is
+    /// shown to recipients with `message-tags`.
+    #[must_use]
+    pub fn with_bot(mut self, bot: bool) -> Self {
+        self.bot = bot;
+        self
     }
 
     /// Group this event into `reference` for recipients that have `cap`.
@@ -104,7 +116,7 @@ impl Event {
         if self.account.is_some() {
             mask |= Cap::AccountTag.bit();
         }
-        if self.msgid.is_some() || self.client_tags.is_some() {
+        if self.msgid.is_some() || self.client_tags.is_some() || self.bot {
             mask |= Cap::MessageTags.bit();
         }
         if let Some((cap, _)) = &self.suffix {
@@ -158,6 +170,10 @@ impl Event {
                 out.push_str("account=");
                 out.push_str(account);
             }
+        }
+        if self.bot && caps.has(Cap::MessageTags) {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str("bot");
         }
         if wrote_tag {
             out.push(' ');

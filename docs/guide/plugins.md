@@ -30,11 +30,14 @@ to load is logged and skipped; the server still starts.
 
 | Hook | Fires on | Non-zero return means |
 | --- | --- | --- |
-| `ferrix_on_message` / `_v2` | every channel `PRIVMSG`/`NOTICE` | message blocked |
-| `ferrix_on_join` | every channel join attempt | join rejected |
+| `ferrix_on_message` / `_v2` | every channel `PRIVMSG`/`NOTICE` (local and federated) | message blocked |
+| `ferrix_on_join` | every channel join attempt (local and federated) | join rejected |
+| `ferrix_on_nick` | a registered local client's nick change | nick change rejected |
+| `ferrix_on_topic` | a local `TOPIC` that sets a new topic | topic change rejected |
 
-Hooks run for **local and federated traffic alike**, so policy is uniform
-for everything this node delivers. A blocked message is not delivered and
+The `message` and `join` hooks run for **local and federated traffic alike**, so policy is uniform
+for everything this node delivers. The `nick` and `topic` hooks run only for local session commands.
+A blocked message is not delivered and
 not recorded in history; the sender gets `FAIL PRIVMSG MSG_BLOCKED …`
 (standard-replies, with NOTICE fallback). Plugins are consulted in order;
 the first block wins.
@@ -113,6 +116,14 @@ Any language that compiles to WASM works the same way — export `memory`,
 
 `ferrix_on_join(ptr, len)` receives `{"nick":"…","channel":"…"}` and
 non-zero rejects the join (the user gets `FAIL JOIN JOIN_BLOCKED`).
+
+`ferrix_on_nick(ptr, len)` receives `{"old":"…","new":"…"}` for a
+registered client's nick change; non-zero keeps the old nick (the user
+gets `432 ERR_ERRONEUSNICKNAME`). `ferrix_on_topic(ptr, len)` receives
+`{"nick":"…","channel":"…","topic":"…"}` when a `TOPIC` sets a new topic
+(after the channel's own permission checks); non-zero rejects it (the user
+gets `FAIL TOPIC TOPIC_BLOCKED`). Both are optional exports, so existing
+plugins keep working unchanged.
 
 ## Choosing a fuel budget
 

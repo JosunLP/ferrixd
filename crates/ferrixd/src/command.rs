@@ -48,14 +48,108 @@ fn upper_verb<'a>(name: &str, buf: &'a mut [u8; 32]) -> Option<&'a str> {
     std::str::from_utf8(&buf[..n]).ok()
 }
 
+/// Intern a message's command verb to a stable `&'static str` for metrics
+/// labelling. Only the known dispatched verbs are recognised; everything else
+/// collapses to `"other"`, so a client cannot inflate metric cardinality with
+/// arbitrary command names (a memory-DoS guard on the histogram map).
+#[must_use]
+pub fn metric_label(msg: &Message<'_>) -> &'static str {
+    let Command::Named(name) = msg.command else {
+        return "other";
+    };
+    let mut buf = [0u8; 32];
+    let Some(upper) = upper_verb(name, &mut buf) else {
+        return "other";
+    };
+    match upper {
+        "CAP" => "CAP",
+        "AUTHENTICATE" => "AUTHENTICATE",
+        "WEBIRC" => "WEBIRC",
+        "PASS" => "PASS",
+        "NICK" => "NICK",
+        "USER" => "USER",
+        "PING" => "PING",
+        "PONG" => "PONG",
+        "QUIT" => "QUIT",
+        "AWAY" => "AWAY",
+        "BATCH" => "BATCH",
+        "REGISTER" => "REGISTER",
+        "JOIN" => "JOIN",
+        "PART" => "PART",
+        "PRIVMSG" => "PRIVMSG",
+        "NOTICE" => "NOTICE",
+        "TAGMSG" => "TAGMSG",
+        "NAMES" => "NAMES",
+        "WHO" => "WHO",
+        "WHOIS" => "WHOIS",
+        "USERHOST" => "USERHOST",
+        "ISON" => "ISON",
+        "TOPIC" => "TOPIC",
+        "MODE" => "MODE",
+        "SETNAME" => "SETNAME",
+        "KICK" => "KICK",
+        "INVITE" => "INVITE",
+        "MONITOR" => "MONITOR",
+        "WATCH" => "WATCH",
+        "SILENCE" => "SILENCE",
+        "GLOBOPS" => "GLOBOPS",
+        "OPERWALL" => "OPERWALL",
+        "MAP" => "MAP",
+        "MARKREAD" => "MARKREAD",
+        "REDACT" => "REDACT",
+        "RENAME" => "RENAME",
+        "OPER" => "OPER",
+        "WALLOPS" => "WALLOPS",
+        "KILL" => "KILL",
+        "KLINE" => "KLINE",
+        "UNKLINE" => "UNKLINE",
+        "GLINE" => "GLINE",
+        "UNGLINE" => "UNGLINE",
+        "DLINE" => "DLINE",
+        "UNDLINE" => "UNDLINE",
+        "CHGHOST" => "CHGHOST",
+        "REHASH" => "REHASH",
+        "CONNECT" => "CONNECT",
+        "SQUIT" => "SQUIT",
+        "CHATHISTORY" => "CHATHISTORY",
+        "METADATA" => "METADATA",
+        "LIST" => "LIST",
+        "LUSERS" => "LUSERS",
+        "MOTD" => "MOTD",
+        "VERSION" => "VERSION",
+        "TIME" => "TIME",
+        "ADMIN" => "ADMIN",
+        "INFO" => "INFO",
+        "LINKS" => "LINKS",
+        "HELP" => "HELP",
+        "WHOWAS" => "WHOWAS",
+        "STATS" => "STATS",
+        "KNOCK" => "KNOCK",
+        "DIE" => "DIE",
+        _ => "other",
+    }
+}
+
 /// Route a parsed message to its handler.
 pub fn dispatch(session: &mut Session, msg: &Message<'_>) {
     let Command::Named(name) = msg.command else {
-        return; // clients do not send numerics
+        // Clients do not send numerics — but receiving one still counts as
+        // traffic, so it closes the WEBIRC first-command window below.
+        session.first_command_received = true;
+        return;
     };
     let params = msg.params.as_slice();
     let mut verb_buf = [0u8; 32];
     let upper = upper_verb(name, &mut verb_buf);
+
+    // WEBIRC must be the very first command on the connection; cmd_webirc
+    // enforces that contract (and marks the connection itself). Every other
+    // command — known, unknown, or numeric — closes the window structurally
+    // here, so no dispatch arm can forget to.
+    if upper == Some("WEBIRC") {
+        return session.cmd_webirc(params);
+    }
+    session.first_command_received = true;
 
     // Commands allowed before (and after) registration.
     match upper {
@@ -69,6 +163,11 @@ pub fn dispatch(session: &mut Session, msg: &Message<'_>) {
         // connection's idle timer (see `crate::connection`).
         Some("PONG") => return,
         Some("QUIT") => return session.cmd_quit(params),
+        // draft/pre-away: a client that negotiated the cap may set its AWAY
+        // status before registration completes (bouncers/multi-connection).
+        Some("AWAY") if session.entry.caps().has(Cap::PreAway) => {
+            return session.cmd_away(params);
+        }
         _ => {}
     }
 
@@ -126,6 +225,8 @@ pub fn dispatch(session: &mut Session, msg: &Message<'_>) {
         Some("UNDLINE") => session.cmd_undline(params),
         Some("CHGHOST") => session.cmd_chghost(params),
         Some("REHASH") => session.cmd_rehash(),
+        Some("CONNECT") => session.cmd_connect(params),
+        Some("SQUIT") => session.cmd_squit(params),
         Some("CHATHISTORY") => session.cmd_chathistory(params),
         Some("METADATA") => session.cmd_metadata(params),
         Some("LIST") => session.cmd_list(params),
@@ -437,6 +538,20 @@ static HELP_TOPICS: &[(&str, &[&str])] = &[
         ],
     ),
     ("REHASH", &["REHASH", "Operator: reload the configuration."]),
+    (
+        "CONNECT",
+        &[
+            "CONNECT <name>",
+            "Operator: link to a configured peer at runtime.",
+        ],
+    ),
+    (
+        "SQUIT",
+        &[
+            "SQUIT <server> [:reason]",
+            "Operator: disconnect a directly-linked peer.",
+        ],
+    ),
     ("DIE", &["DIE", "Operator: shut the server down."]),
 ];
 
@@ -502,10 +617,29 @@ struct WhoRow {
     realname: String,
     away: bool,
     oper: bool,
+    /// Umode `+B` (bot-mode): renders the `BOT` ISUPPORT character in WHO flags.
+    bot: bool,
     account: Option<String>,
     idle: u64,
     hops: u32,
     prefix: MemberPrefix,
+}
+
+impl WhoRow {
+    /// The WHO status field: `H`/`G` (here/gone), then `*` (oper), the bot-mode
+    /// character (`+B`), and finally any channel prefixes (`@`/`+`).
+    fn flags(&self, multi: bool) -> String {
+        let mut f = String::with_capacity(4);
+        f.push(if self.away { 'G' } else { 'H' });
+        if self.oper {
+            f.push('*');
+        }
+        if self.bot {
+            f.push(BOT_UMODE);
+        }
+        f.push_str(&self.prefix.render(multi));
+        f
+    }
 }
 
 /// Parse a WHO second parameter of the form `<flags>%<fields>[,<querytype>]`.
@@ -531,6 +665,9 @@ fn render_user_modes(d: &state::ClientData) -> String {
     }
     if d.wallops {
         s.push('w');
+    }
+    if d.bot {
+        s.push(BOT_UMODE);
     }
     s
 }
@@ -663,6 +800,9 @@ pub(crate) const MAX_TOPIC_LEN: usize = 390;
 pub(crate) const MAX_KICK_LEN: usize = 300;
 /// Away-message length in characters (`AWAYLEN`).
 pub(crate) const MAX_AWAY_LEN: usize = 200;
+/// IRCv3 bot-mode user-mode letter, advertised as `ISUPPORT BOT=B` and enforced
+/// here (`MODE <nick> +B`), so the advertisement cannot drift from behaviour.
+pub(crate) const BOT_UMODE: char = 'B';
 
 /// Truncate `text` to at most `max` characters (never splitting a UTF-8
 /// codepoint), as the advertised `*LEN` tokens promise.
@@ -788,6 +928,15 @@ impl Session {
             }
             "END" => {
                 self.cap_negotiating = false;
+                // draft/extended-isupport: deliver ISUPPORT during negotiation,
+                // before RPL_WELCOME, for clients that asked for it early.
+                if !self.registered
+                    && !self.isupport_sent
+                    && self.entry.caps().has(Cap::ExtendedIsupport)
+                {
+                    self.send_isupport();
+                    self.isupport_sent = true;
+                }
                 self.maybe_register();
             }
             other => self.numeric(ERR_INVALIDCAPCMD, &[other], Some("Invalid CAP subcommand")),
@@ -797,7 +946,12 @@ impl Session {
     // ------------------------------------------------------------ SASL / AUTH ---
 
     fn cmd_authenticate(&mut self, params: &[&str]) {
-        if self.registered || self.account().is_some() {
+        // During the pre-registration handshake a client may authenticate only
+        // once. After registration, a client that negotiated `sasl` may
+        // re-authenticate mid-session to switch to (or add) an account — the new
+        // login replaces the old on success, while a failed attempt leaves the
+        // existing login untouched (IRCv3 SASL 3.2 reauthentication).
+        if !self.registered && self.account().is_some() {
             self.numeric(
                 ERR_SASLALREADY,
                 &[],
@@ -1161,6 +1315,22 @@ impl Session {
             self.server.fold(&current)
         };
 
+        // Let WASM plugins veto a registered client's nick change (fail-open;
+        // pre-registration nick selection during the handshake is not a
+        // moderation event and is left untouched).
+        if self.registered && nick != current {
+            if let Some(plugin_host) = self.server.plugins() {
+                if plugin_host.on_nick(&current, nick) == crate::plugin::Verdict::Block {
+                    self.numeric(
+                        ERR_ERRONEUSNICKNAME,
+                        &[nick],
+                        Some("Nickname change refused by server policy"),
+                    );
+                    return;
+                }
+            }
+        }
+
         // A pure case change of the client's own nick: no re-claim needed.
         if !current_folded.is_empty() && folded == current_folded {
             if current != nick {
@@ -1455,7 +1625,11 @@ impl Session {
         );
 
         self.send_topic_on_join(&channel, &display);
-        self.send_names(&channel, &display);
+        // no-implicit-names: clients that negotiated the cap skip the automatic
+        // NAMES burst on JOIN (they still get it from an explicit NAMES).
+        if !self.entry.caps().has(Cap::NoImplicitNames) {
+            self.send_names(&channel, &display);
+        }
 
         // Tell linked peers a local user joined this channel (with its prefix,
         // so a creator/founder's op status is visible network-wide).
@@ -1585,6 +1759,20 @@ impl Session {
                     );
                     return;
                 }
+                // Let WASM plugins veto the topic change (fail-open).
+                if let Some(plugin_host) = self.server.plugins() {
+                    if plugin_host.on_topic(&self.entry.nick(), &display, new_topic)
+                        == crate::plugin::Verdict::Block
+                    {
+                        self.fail(
+                            "TOPIC",
+                            "TOPIC_BLOCKED",
+                            &[display.as_str()],
+                            "Topic change blocked by server policy",
+                        );
+                        return;
+                    }
+                }
                 let set_at = now_unix();
                 let nick = self.entry.nick();
                 {
@@ -1661,6 +1849,7 @@ impl Session {
         // channel relay, and the DM relay below.
         let source_mask = format!("{nick}!{user}@{host}");
         let echo = self.entry.caps().has(Cap::EchoMessage);
+        let is_bot = self.entry.data.lock().bot;
         let msgid = self.server.history.next_msgid();
         let now_ms = state::now_millis();
         let account = self.account();
@@ -1759,7 +1948,8 @@ impl Session {
             let mut event = Event::new(body)
                 .with_time(state::format_server_time(now_ms))
                 .with_account(account)
-                .with_msgid(msgid.clone());
+                .with_msgid(msgid.clone())
+                .with_bot(is_bot);
             if let Some(tags) = client_tags.clone() {
                 event = event.with_client_tags(tags);
             }
@@ -1830,7 +2020,8 @@ impl Session {
                         let mut event = Event::new(body)
                             .with_time(state::format_server_time(now_ms))
                             .with_account(account)
-                            .with_msgid(msgid);
+                            .with_msgid(msgid)
+                            .with_bot(is_bot);
                         if let Some(tags) = client_tags {
                             event = event.with_client_tags(tags);
                         }
@@ -1869,7 +2060,8 @@ impl Session {
             let mut event = Event::new(body)
                 .with_time(state::format_server_time(now_ms))
                 .with_account(account)
-                .with_msgid(msgid);
+                .with_msgid(msgid)
+                .with_bot(is_bot);
             if let Some(tags) = client_tags {
                 event = event.with_client_tags(tags);
             }
@@ -1909,6 +2101,14 @@ impl Session {
         };
         self.numeric(code, &[], Some(ack));
 
+        // draft/pre-away: a pre-registration AWAY only records the status — the
+        // user is not yet in any channel, nor introduced to linked peers, so
+        // there is nothing to notify (and the change in nick status, once the
+        // user registers, is reported by the normal registration burst).
+        if !self.registered {
+            return;
+        }
+
         // away-notify: tell capable co-members about the change.
         let (nick, user, host) = self.identity();
         let mut line = Line::user(&nick, &user, &host).command("AWAY");
@@ -1939,6 +2139,7 @@ impl Session {
         let (nick, user, host) = self.identity();
         let source_mask = format!("{nick}!{user}@{host}");
         let echo = self.entry.caps().has(Cap::EchoMessage);
+        let is_bot = self.entry.data.lock().bot;
 
         if casemap::is_valid_channel(target) {
             let folded = self.server.fold(target);
@@ -1962,7 +2163,8 @@ impl Session {
             let event = Event::new(format!(":{source_mask} TAGMSG {display}"))
                 .with_client_tags(tagstr.clone())
                 .with_time(self.now_time())
-                .with_account(self.account());
+                .with_account(self.account())
+                .with_bot(is_bot);
             deliver::to_channel_capped(&channel, &event, Cap::MessageTags, Some(self.entry.id));
             if echo && self.entry.caps().has(Cap::MessageTags) {
                 self.deliver_self(&event);
@@ -1986,7 +2188,8 @@ impl Session {
                         let event = Event::new(format!(":{source_mask} TAGMSG {}", remote.nick))
                             .with_client_tags(tagstr)
                             .with_time(self.now_time())
-                            .with_account(self.account());
+                            .with_account(self.account())
+                            .with_bot(is_bot);
                         self.deliver_self(&event);
                     }
                     return;
@@ -1997,7 +2200,8 @@ impl Session {
             let event = Event::new(format!(":{source_mask} TAGMSG {}", dest.nick()))
                 .with_client_tags(tagstr)
                 .with_time(self.now_time())
-                .with_account(self.account());
+                .with_account(self.account())
+                .with_bot(is_bot);
             if dest.caps().has(Cap::MessageTags) {
                 deliver::to_client(&dest, &event);
             }
@@ -2213,6 +2417,7 @@ impl Session {
             realname: d.realname.clone(),
             away: d.away.is_some(),
             oper: d.oper,
+            bot: d.bot,
             account: d.account.clone(),
             idle: now_unix().saturating_sub(d.last_active),
             hops: 0,
@@ -2231,6 +2436,7 @@ impl Session {
             realname: user.realname.clone(),
             away: user.away.is_some(),
             oper: false,
+            bot: user.bot,
             account: user.account.clone(),
             idle: 0,
             hops: 1,
@@ -2270,12 +2476,7 @@ impl Session {
             fields.push(row.nick.clone());
         }
         if has('f') {
-            fields.push(format!(
-                "{}{}{}",
-                if row.away { "G" } else { "H" },
-                if row.oper { "*" } else { "" },
-                row.prefix.render(multi)
-            ));
+            fields.push(row.flags(multi));
         }
         if has('d') {
             fields.push(row.hops.to_string());
@@ -2296,12 +2497,7 @@ impl Session {
 
     fn who_reply(&self, channel: &str, row: &WhoRow) {
         let multi = self.entry.caps().has(Cap::MultiPrefix);
-        let flags = format!(
-            "{}{}{}",
-            if row.away { "G" } else { "H" },
-            if row.oper { "*" } else { "" },
-            row.prefix.render(multi)
-        );
+        let flags = row.flags(multi);
         let hop_real = format!("{} {}", row.hops, row.realname);
         self.numeric(
             RPL_WHOREPLY,
@@ -2342,6 +2538,9 @@ impl Session {
                     &[&remote.nick, &remote.user, &remote.host, "*"],
                     Some(&remote.realname),
                 );
+                if remote.bot {
+                    self.numeric(RPL_WHOISBOT, &[&remote.nick], Some("is a bot"));
+                }
                 self.numeric(
                     RPL_WHOISSERVER,
                     &[&remote.nick, &remote.server_sid],
@@ -2404,8 +2603,12 @@ impl Session {
         };
         let requester_oper = self.entry.data.lock().oper;
         let is_self = entry.id == self.entry.id;
+        let target_bot = entry.data.lock().bot;
 
         self.numeric(RPL_WHOISUSER, &[&nick, &user, &host, "*"], Some(&realname));
+        if target_bot {
+            self.numeric(RPL_WHOISBOT, &[&nick], Some("is a bot"));
+        }
 
         // Operators (and the user themselves) see the real IP behind any cloak.
         if requester_oper || is_self {
@@ -2525,6 +2728,14 @@ impl Session {
                     'w' if d.wallops != adding => {
                         d.wallops = adding;
                         changed.push(adding, 'w');
+                    }
+                    // Bot-mode (`+B`): a client self-declares as a bot. Freely
+                    // settable and clearable, mirroring the IRCv3 spec's example.
+                    c if c == BOT_UMODE => {
+                        if d.bot != adding {
+                            d.bot = adding;
+                            changed.push(adding, BOT_UMODE);
+                        }
                     }
                     // Users may de-op themselves but can only gain `+o` via OPER.
                     'o' if !adding && d.oper => {
@@ -3650,6 +3861,81 @@ impl Session {
         }
     }
 
+    /// `CONNECT <name>`: operator-initiated outbound S2S link to a configured
+    /// peer, established at runtime (beyond the config-driven links started at
+    /// boot). One attempt is made; its outcome is logged.
+    fn cmd_connect(&mut self, params: &[&str]) {
+        if !self.require_oper() {
+            return;
+        }
+        let Some(&name) = params.first() else {
+            self.need_more_params("CONNECT");
+            return;
+        };
+        let Some(peer) = self.server.link_config_by_name(name) else {
+            self.numeric(
+                ERR_NOSUCHSERVER,
+                &[name],
+                Some("No configured link by that name"),
+            );
+            return;
+        };
+        if peer.connect.is_none() {
+            self.notice(&format!(
+                "CONNECT: {} is accept-only (no address)",
+                peer.name
+            ));
+            return;
+        }
+        if self.server.direct_link(&peer.name).is_some() {
+            self.notice(&format!("CONNECT: {} is already linked", peer.name));
+            return;
+        }
+        let Some(client_config) = self.server.link_client_config() else {
+            self.notice("CONNECT: link TLS is not configured");
+            return;
+        };
+        let server = self.server.clone();
+        let peer_name = peer.name.clone();
+        // A manual CONNECT overrides a prior operator SQUIT.
+        server.clear_link_admin_down(&peer_name);
+        self.notice(&format!("Connecting to {peer_name}..."));
+        // Detached: the handshake and (on success) the link's read loop outlive
+        // this command. Failures surface in the server log.
+        tokio::spawn(async move {
+            match crate::link::connect_now(peer, server, client_config).await {
+                Ok(()) => tracing::info!(peer = %peer_name, "operator CONNECT link closed"),
+                Err(err) => tracing::warn!(peer = %peer_name, %err, "operator CONNECT failed"),
+            }
+        });
+    }
+
+    /// `SQUIT <server> [:reason]`: operator-initiated teardown of a directly
+    /// linked peer. The peer (and the subtree behind it) splits off via the
+    /// usual netsplit path.
+    fn cmd_squit(&mut self, params: &[&str]) {
+        if !self.require_oper() {
+            return;
+        }
+        let Some(&target) = params.first() else {
+            self.need_more_params("SQUIT");
+            return;
+        };
+        let reason = params
+            .get(1)
+            .copied()
+            .filter(|r| !r.is_empty())
+            .unwrap_or("SQUIT requested by operator");
+        match self.server.squit_link(target, reason) {
+            Some(name) => self.notice(&format!("SQUIT: closing link to {name}")),
+            None => self.numeric(
+                ERR_NOSUCHSERVER,
+                &[target],
+                Some("No such directly-linked server"),
+            ),
+        }
+    }
+
     fn cmd_metadata(&mut self, params: &[&str]) {
         let (Some(&target), Some(&sub)) = (params.first(), params.get(1)) else {
             self.fail("METADATA", "INVALID_PARAMS", &[], "Not enough parameters");
@@ -3978,6 +4264,65 @@ impl Session {
             return;
         };
         self.pass = Some(password.to_owned());
+    }
+
+    /// `WEBIRC <password> <gateway> <hostname> <ip> [options…]` — a trusted
+    /// web/IRC gateway rewrites this connection's apparent host and IP so users
+    /// behind it are seen (and moderated) by their real address rather than the
+    /// gateway's.
+    ///
+    /// Security: the command is refused unless it is the very first thing on the
+    /// connection (before CAP/NICK/USER/PASS), the *real* peer address is on the
+    /// gateway's allow-list, and the shared secret matches (constant-time). Any
+    /// failure closes the connection without disclosing which check failed.
+    fn cmd_webirc(&mut self, params: &[&str]) {
+        // Must be the first command: a gateway sends it before anything else.
+        // `first_command_received` covers registration and repeated WEBIRC too —
+        // both require earlier commands, which set the flag in dispatch.
+        if self.first_command_received {
+            self.quit = Some("WEBIRC command out of sequence".to_owned());
+            return;
+        }
+        // Mark that the first command has been received, so subsequent attempts
+        // or other commands will be rejected.
+        self.first_command_received = true;
+        let (Some(&password), Some(&gateway), Some(&hostname), Some(&ip)) =
+            (params.first(), params.get(1), params.get(2), params.get(3))
+        else {
+            self.quit = Some("WEBIRC: not enough parameters".to_owned());
+            return;
+        };
+        // The address that must be allow-listed is the genuine peer (the
+        // gateway), never a value the gateway supplied.
+        let source_ip = self.peer.ip().to_string();
+        if !self.server.webirc_authorize(&source_ip, gateway, password) {
+            self.quit = Some("WEBIRC authentication failed".to_owned());
+            return;
+        }
+        // Validate the spoofed IP so a compromised gateway cannot inject a
+        // non-address into hostmasks, D-Line checks, or cloaking.
+        let Ok(parsed_ip) = ip.parse::<std::net::IpAddr>() else {
+            self.quit = Some("WEBIRC: invalid IP address".to_owned());
+            return;
+        };
+        let real_ip = parsed_ip.to_string();
+        // The gateway passed its own D-Line at connect; now enforce the *real*
+        // client's IP against the D-Line list too.
+        if let Some(reason) = self.server.matches_dline(&real_ip) {
+            self.quit = Some(format!("D-Lined: {reason}"));
+            return;
+        }
+        // `secure` in the options marks the client↔gateway leg as TLS.
+        let secure = params.get(4..).is_some_and(|opts| opts.contains(&"secure"));
+        {
+            let mut d = self.entry.data.lock();
+            d.real_ip = real_ip;
+            d.host = hostname.to_owned();
+            if secure {
+                d.secure = true;
+            }
+        }
+        tracing::debug!(gateway, hostname, ip, "WEBIRC applied");
     }
 
     /// `LINKS` — list every server in the network: ourselves, direct peers,
