@@ -43,7 +43,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **TLS reload without restart** — `REHASH` reloads the certificate and key for
   every TLS listener (client, `wss://`, and the S2S link listener) without
   dropping the process or any live connection; a failed reload keeps the
-  previous material armed.
+  previous material armed. The outbound-link client TLS is now attached
+  unconditionally and rebuilt on every `REHASH`, so operator `CONNECT` works for
+  links added after startup and every outbound (re)connect — the auto-dial loop
+  included — presents the reloaded certificate instead of the one captured when
+  the loop was first spawned.
 - **`EXTBAN=~,a` ISUPPORT token** — the account extban (`~a:`, honoured in
   `+b`/`+e`/`+I` since 1.0) is now advertised to clients in `RPL_ISUPPORT`.
 - **Plugin hooks for nick and topic changes** — the WASM host gains

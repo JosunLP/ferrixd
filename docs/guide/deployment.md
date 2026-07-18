@@ -129,9 +129,11 @@ install -o root -g ferrixd -m 644 \
 # leaves the previous certificate armed, so the listener never goes dark.
 ```
 
-Existing outbound S2S links keep the certificate they handshook with until
-they reconnect (`SQUIT` + `CONNECT` forces that). `REHASH` refreshes the TLS
-client configuration for future operator `CONNECT` commands.
+An established outbound S2S link keeps the certificate it handshook with until
+it reconnects. `REHASH` rebuilds the TLS client configuration for **every**
+outbound link, so the reloaded certificate is presented on the next (re)connect
+— whether that is the automatic reconnect loop after a drop, an operator
+`CONNECT`, or a `SQUIT` + `CONNECT` forcing it immediately.
 
 ## Docker Compose
 

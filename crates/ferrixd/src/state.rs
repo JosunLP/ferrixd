@@ -1836,14 +1836,15 @@ impl Server {
         } else {
             None
         };
-        let link_client = if !config.links.is_empty() {
-            Some(
-                crate::tls::build_link_client_config(&config.tls)
-                    .map_err(|e| format!("building link client TLS: {e}"))?,
-            )
-        } else {
-            None
-        };
+        // Rebuild the outbound-link client TLS unconditionally (TLS material is
+        // always present in a running server). Keeping it in step with the
+        // startup attach means operator `CONNECT` and outbound reconnects always
+        // present the freshly reloaded certificate, even for links that only
+        // appear in the config after this `REHASH`.
+        let link_client = Some(
+            crate::tls::build_link_client_config(&config.tls)
+                .map_err(|e| format!("building link client TLS: {e}"))?,
+        );
 
         // Only after all validation succeeds, commit the configuration.
         self.apply_config(&config)?;
@@ -4704,6 +4705,36 @@ mod tests {
 
         // SQUIT of an unknown server reports nothing to tear down.
         assert!(server.squit_link("irc.nope", "x").is_none());
+    }
+
+    #[test]
+    fn link_client_config_absent_until_attached_then_replaceable() {
+        // The outbound-link TLS config is a reloadable slot: absent on a server
+        // with no TLS attached, populated by the (now unconditional) startup
+        // attach, and swapped wholesale by `REHASH` so reconnects present the
+        // freshly reloaded certificate rather than the one captured at spawn.
+        let dev_tls = crate::config::TlsConfig {
+            cert: None,
+            key: None,
+            self_signed_dev: true,
+            dev_hostnames: vec!["localhost".to_owned()],
+        };
+        let server = test_server();
+        assert!(server.link_client_config().is_none());
+
+        let first = crate::tls::build_link_client_config(&dev_tls).unwrap();
+        server.attach_link_client(first.clone());
+        let stored = server.link_client_config().expect("link client attached");
+        assert!(Arc::ptr_eq(&stored, &first));
+
+        // A rebuild (as REHASH performs) replaces the stored Arc; the accessor
+        // hands out the new one, so `run_outbound`'s per-attempt read reconnects
+        // with the reloaded material.
+        let second = crate::tls::build_link_client_config(&dev_tls).unwrap();
+        server.attach_link_client(second.clone());
+        let reloaded = server.link_client_config().expect("link client reloaded");
+        assert!(Arc::ptr_eq(&reloaded, &second));
+        assert!(!Arc::ptr_eq(&reloaded, &first));
     }
 
     #[test]

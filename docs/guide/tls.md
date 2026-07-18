@@ -37,16 +37,17 @@ Two operational notes:
    `/etc/ferrixd/` with tight ownership is the usual pattern).
 2. **Renewal is hot — no restart.** `REHASH` reloads the certificate and
    key for every TLS listener (client, `wss://`, and the S2S link
-   listener) and refreshes the TLS client configuration for operator-initiated
+   listener) and rebuilds the TLS client configuration used for **all**
    outbound links, without dropping the process or any live connection: only
    handshakes started after the reload use the new material. Point your
    certbot deploy hook at a `REHASH` (e.g. send the operator command, or
    trigger it however you drive the server) instead of a full restart. If
    the new PEM is unreadable or malformed the reload fails and the
    **previous** certificate stays armed, so a botched renewal never leaves
-   the listener without a certificate. Existing outbound links keep the
-   certificate they handshook with until they reconnect (`SQUIT` +
-   `CONNECT` forces that).
+   the listener without a certificate. An established outbound link keeps the
+   certificate it handshook with until it reconnects; the next (re)connect —
+   whether the auto-dial reconnect loop after a drop, an operator `CONNECT`,
+   or a `SQUIT` + `CONNECT` — presents the reloaded certificate automatically.
 
 Validate before reloading:
 

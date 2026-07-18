@@ -389,19 +389,18 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
     }
 
     // S2S peer links: outbound connectors and an optional listener.
-    if !config.links.is_empty() {
-        let link_client = tls::build_link_client_config(&config.tls).context("link TLS config")?;
-        // Hand the server the client config so operator `CONNECT` can dial a
-        // configured peer at runtime (the link definitions are already loaded by
-        // `apply_config`).
-        params.server.attach_link_client(link_client.clone());
-        for link in &config.links {
-            tokio::spawn(crate::link::run_outbound(
-                link.clone(),
-                params.server.clone(),
-                link_client.clone(),
-            ));
-        }
+    //
+    // Attach the link client TLS unconditionally (TLS material is always present
+    // — validated at startup). This lets operator `CONNECT` dial a peer added
+    // later by `REHASH` without needing links in the initial config, and keeps
+    // the stored config reloadable so reconnects present a `REHASH`ed cert.
+    let link_client = tls::build_link_client_config(&config.tls).context("link TLS config")?;
+    params.server.attach_link_client(link_client);
+    for link in &config.links {
+        tokio::spawn(crate::link::run_outbound(
+            link.clone(),
+            params.server.clone(),
+        ));
     }
     if let Some(link_addr) = config.server.link_bind {
         let link_listener = TcpListener::bind(link_addr)
