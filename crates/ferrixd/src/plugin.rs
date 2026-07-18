@@ -287,12 +287,14 @@ impl KvStore {
     /// Write the store to its backing file if dirty and the flush interval has
     /// elapsed (called after hook calls, off the wasm execution path).
     fn flush_if_due(&mut self, plugin: &str) {
-        let Some(path) = self.path.clone() else {
-            return;
-        };
+        // Cheap gates first: the common case is a clean store on the per-message
+        // hot path, so bail before cloning the path or reading the clock.
         if !self.dirty {
             return;
         }
+        let Some(path) = self.path.as_ref() else {
+            return;
+        };
         let now = wall_ms();
         if now.saturating_sub(self.last_flush_ms) < KV_FLUSH_INTERVAL_MS {
             return;
@@ -304,12 +306,20 @@ impl KvStore {
             out.push_str(&BASE64.encode(value));
             out.push('\n');
         }
-        match std::fs::write(&path, out) {
+        // Write to a sibling temp file and rename into place, so a crash mid-
+        // write can never truncate the live store (rename is atomic on the same
+        // filesystem). A failed write leaves the previous state intact.
+        let tmp = path.with_extension("kv.tmp");
+        let result = std::fs::write(&tmp, &out).and_then(|()| std::fs::rename(&tmp, path));
+        match result {
             Ok(()) => {
                 self.dirty = false;
                 self.last_flush_ms = now;
             }
-            Err(err) => warn!(plugin, %err, "failed to persist plugin KV store"),
+            Err(err) => {
+                let _ = std::fs::remove_file(&tmp);
+                warn!(plugin, %err, "failed to persist plugin KV store");
+            }
         }
     }
 }
