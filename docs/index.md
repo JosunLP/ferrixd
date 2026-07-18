@@ -32,7 +32,8 @@ features:
   - icon: 🔐
     title: TLS-first, hardened by default
     details: >-
-      TLS is the primary transport; plaintext must be explicitly enabled and
+      TLS is the primary transport, with IRC-over-WebSockets (ws/wss) and
+      WEBIRC gateways alongside it; plaintext must be explicitly enabled and
       is loopback-only unless you insist. SASL PLAIN, EXTERNAL, and
       SCRAM-SHA-256 over Argon2id-hashed accounts, verified in constant time.
   - icon: 📡
