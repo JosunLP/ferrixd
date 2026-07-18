@@ -1,8 +1,9 @@
 # WASM Plugins
 
 ferrixd can load **WebAssembly plugins** that hook into server events —
-today: vetoing channel messages and joins. Plugins run inside a pure-Rust
-WASM interpreter ([`wasmi`](https://docs.rs/wasmi)) under a strict sandbox:
+today: vetoing channel messages, joins, nick changes, and topic changes.
+Plugins run inside a pure-Rust WASM interpreter
+([`wasmi`](https://docs.rs/wasmi)) under a strict sandbox:
 
 - **No ambient authority.** A plugin can only call the host functions
   ferrixd grants (currently: a logger). No filesystem, no network, no

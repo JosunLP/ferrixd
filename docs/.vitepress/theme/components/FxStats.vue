@@ -28,10 +28,10 @@ const STATS: Stat[] = [
     detail: 'resident, at full load',
   },
   {
-    value: 26,
+    value: 29,
     format: (n) => `${Math.round(n)}`,
     label: 'IRCv3 capabilities',
-    detail: 'element 26, fittingly',
+    detail: 'negotiable via CAP',
   },
   {
     value: 0,

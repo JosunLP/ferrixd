@@ -127,10 +127,12 @@ dropping connections**, and answers `382 RPL_REHASHING`. What it reloads:
 
 | Reloaded | Not reloaded (restart required) |
 | --- | --- |
-| `[[accounts]]` | listeners (`tls_bind`, `plain_bind`, `link_bind`) |
+| `[[accounts]]` | listeners (`tls_bind`, `plain_bind`, `link_bind`, `ws_bind`, `wss_bind`) |
 | `[[operators]]` | `[limits]` |
 | `[[bans]]` (K-lines) | `[persistence]`, `[metrics]`, `[plugins]` |
-| `motd`, `[tls]` certificates, `[[links]]` | |
+| `[[webirc]]` | `sid`, `cloak_key`, `casemapping` |
+| `server.motd`, `server.password` | |
+| `[tls]` certificate/key, `[[links]]` definitions | |
 
 Self-registered (persisted) accounts are re-applied on top of the config
 accounts after a rehash, so a `REHASH` never wipes runtime registrations.
