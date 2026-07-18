@@ -1,8 +1,9 @@
 # Roadmap
 
-ferrixd reached **1.0.0** — the first stable release — and **1.1.0** extends it
-(IRC over WebSockets, WEBIRC, bot-mode, live link management, TLS reload, and
-more; see the [changelog](https://github.com/josunlp/ferrixd/blob/main/CHANGELOG.md)).
+ferrixd reached **1.0.0** — the first stable release — **1.1.0** extended it
+(IRC over WebSockets, WEBIRC, bot-mode, live link management, TLS reload), and
+**1.2.0** grows the plugin system into a full extension surface (Plugin ABI v2;
+see the [changelog](https://github.com/josunlp/ferrixd/blob/main/CHANGELOG.md)).
 This page records what the current release contains, what the stability promise
 covers, and what may come next.
 
