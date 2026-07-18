@@ -220,7 +220,7 @@ fn select_subprotocol(offered: &[String]) -> Option<&'static str> {
 
 /// Find the `\r\n\r\n` header terminator, returning the index of its first byte.
 fn find_crlf_crlf(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|w| w == b"\r\n\r\n")
+    memchr::memmem::find(buf, b"\r\n\r\n")
 }
 
 /// The result of trying to decode one frame from the inbound buffer.

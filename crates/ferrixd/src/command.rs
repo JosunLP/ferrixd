@@ -133,67 +133,48 @@ pub fn metric_label(msg: &Message<'_>) -> &'static str {
 /// Route a parsed message to its handler.
 pub fn dispatch(session: &mut Session, msg: &Message<'_>) {
     let Command::Named(name) = msg.command else {
-        return; // clients do not send numerics
+        // Clients do not send numerics — but receiving one still counts as
+        // traffic, so it closes the WEBIRC first-command window below.
+        session.first_command_received = true;
+        return;
     };
     let params = msg.params.as_slice();
     let mut verb_buf = [0u8; 32];
     let upper = upper_verb(name, &mut verb_buf);
 
+    // WEBIRC must be the very first command on the connection; cmd_webirc
+    // enforces that contract (and marks the connection itself). Every other
+    // command — known, unknown, or numeric — closes the window structurally
+    // here, so no dispatch arm can forget to.
+    if upper == Some("WEBIRC") {
+        return session.cmd_webirc(params);
+    }
+    session.first_command_received = true;
+
     // Commands allowed before (and after) registration.
     match upper {
-        Some("CAP") => {
-            session.first_command_received = true;
-            return session.cmd_cap(params);
-        }
-        Some("AUTHENTICATE") => {
-            session.first_command_received = true;
-            return session.cmd_authenticate(params);
-        }
-        // WEBIRC is always routed through cmd_webirc, which enforces the
-        // first-command contract internally.
-        Some("WEBIRC") => return session.cmd_webirc(params),
-        Some("PASS") => {
-            session.first_command_received = true;
-            return session.cmd_pass(params);
-        }
-        Some("NICK") => {
-            session.first_command_received = true;
-            return session.cmd_nick(params);
-        }
-        Some("USER") => {
-            session.first_command_received = true;
-            return session.cmd_user(params);
-        }
-        Some("PING") => {
-            session.first_command_received = true;
-            return session.cmd_ping(params);
-        }
+        Some("CAP") => return session.cmd_cap(params),
+        Some("AUTHENTICATE") => return session.cmd_authenticate(params),
+        Some("PASS") => return session.cmd_pass(params),
+        Some("NICK") => return session.cmd_nick(params),
+        Some("USER") => return session.cmd_user(params),
+        Some("PING") => return session.cmd_ping(params),
         // A PONG needs no reply; simply having been read already reset the
         // connection's idle timer (see `crate::connection`).
-        Some("PONG") => {
-            session.first_command_received = true;
-            return;
-        }
-        Some("QUIT") => {
-            session.first_command_received = true;
-            return session.cmd_quit(params);
-        }
+        Some("PONG") => return,
+        Some("QUIT") => return session.cmd_quit(params),
         // draft/pre-away: a client that negotiated the cap may set its AWAY
         // status before registration completes (bouncers/multi-connection).
         Some("AWAY") if session.entry.caps().has(Cap::PreAway) => {
-            session.first_command_received = true;
             return session.cmd_away(params);
         }
         _ => {}
     }
 
     if !session.registered {
-        session.first_command_received = true;
         session.numeric(ERR_NOTREGISTERED, &[], Some("You have not registered"));
         return;
     }
-
-    session.first_command_received = true;
 
     // Absorb messages belonging to an in-progress draft/multiline batch.
     if session.try_multiline_accumulate(msg) {
@@ -3916,6 +3897,8 @@ impl Session {
         };
         let server = self.server.clone();
         let peer_name = peer.name.clone();
+        // A manual CONNECT overrides a prior operator SQUIT.
+        server.clear_link_admin_down(&peer_name);
         self.notice(&format!("Connecting to {peer_name}..."));
         // Detached: the handshake and (on success) the link's read loop outlive
         // this command. Failures surface in the server log.
@@ -4294,7 +4277,9 @@ impl Session {
     /// failure closes the connection without disclosing which check failed.
     fn cmd_webirc(&mut self, params: &[&str]) {
         // Must be the first command: a gateway sends it before anything else.
-        if self.first_command_received || self.registered || self.webirc_applied {
+        // `first_command_received` covers registration and repeated WEBIRC too —
+        // both require earlier commands, which set the flag in dispatch.
+        if self.first_command_received {
             self.quit = Some("WEBIRC command out of sequence".to_owned());
             return;
         }
@@ -4337,7 +4322,6 @@ impl Session {
                 d.secure = true;
             }
         }
-        self.webirc_applied = true;
         tracing::debug!(gateway, hostname, ip, "WEBIRC applied");
     }
 

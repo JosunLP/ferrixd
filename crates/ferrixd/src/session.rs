@@ -32,9 +32,6 @@ pub struct Session {
     pub pass: Option<String>,
     /// Whether a `USER` command has been accepted.
     pub has_user: bool,
-    /// Whether a trusted `WEBIRC` gateway has rewritten this connection's
-    /// apparent host/IP (so a second `WEBIRC` is refused).
-    pub webirc_applied: bool,
     /// Whether the client is mid `CAP` negotiation (delays registration).
     pub cap_negotiating: bool,
     /// `CAP LS` version the client requested (302 for modern clients).
@@ -48,8 +45,9 @@ pub struct Session {
     pub isupport_sent: bool,
     /// Set by a handler to end the connection with this quit reason.
     pub quit: Option<String>,
-    /// Whether the first substantive command (anything but PING/PONG/unknown)
-    /// has been received, used to enforce the WEBIRC first-command contract.
+    /// Whether any command (or numeric) has been received on this connection —
+    /// set structurally in dispatch to enforce the WEBIRC first-command
+    /// contract (a successful WEBIRC sets it too, refusing a second one).
     pub first_command_received: bool,
     /// An in-progress inbound `draft/multiline` batch, if any.
     pub multiline: Option<MultilineBatch>,
@@ -95,7 +93,6 @@ impl Session {
             cert_fp,
             pass: None,
             has_user: false,
-            webirc_applied: false,
             cap_negotiating: false,
             cap_version: 0,
             sasl: SaslSession::default(),
@@ -448,9 +445,10 @@ impl Session {
         // Channel modes advertised in MYINFO derive from the single BOOL_MODES
         // table plus the parameterised key/limit modes.
         let chanmodes = format!("{}kl", state::bool_mode_letters());
+        let umodes = format!("iow{}", crate::command::BOT_UMODE);
         self.numeric(
             RPL_MYINFO,
-            &[&info.name, &info.version, "iowB", &chanmodes],
+            &[&info.name, &info.version, &umodes, &chanmodes],
             None,
         );
         // draft/extended-isupport may have already sent this during CAP

@@ -394,6 +394,9 @@ pub struct Server {
     /// TLS client config for operator-initiated outbound links (`CONNECT`).
     /// Reloaded during REHASH when links are configured; None when no links exist.
     link_client_config: RwLock<Option<Arc<rustls::ClientConfig>>>,
+    /// Peer names taken down by operator `SQUIT`. The config-driven reconnect
+    /// loop stops for these instead of re-dialing; `CONNECT` clears the mark.
+    links_admin_down: Mutex<std::collections::HashSet<String>>,
 }
 
 /// The `+o`/`+i`/`+B` umode string for a user, or `None` when none is set (so a
@@ -407,7 +410,7 @@ fn umode_flags(oper: bool, invisible: bool, bot: bool) -> Option<String> {
         flags.push('i');
     }
     if bot {
-        flags.push('B');
+        flags.push(crate::command::BOT_UMODE);
     }
     (!flags.is_empty()).then(|| format!("+{flags}"))
 }
@@ -476,6 +479,7 @@ impl Server {
             webirc: RwLock::new(Vec::new()),
             link_configs: RwLock::new(Vec::new()),
             link_client_config: RwLock::new(None),
+            links_admin_down: Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -486,7 +490,6 @@ impl Server {
     /// `false`.
     #[must_use]
     pub fn webirc_authorize(&self, source_ip: &str, gateway: &str, password: &str) -> bool {
-        use subtle::ConstantTimeEq;
         let mut ok = false;
         for gw in self.webirc.read().iter() {
             // Gate on the source address first, then compare the secret. The
@@ -495,7 +498,7 @@ impl Server {
             // gateway name or which host entry matched.
             let host_ok =
                 gw.name == gateway && gw.hosts.iter().any(|h| crate::mask::matches(h, source_ip));
-            let pass_ok: bool = gw.password.as_bytes().ct_eq(password.as_bytes()).into();
+            let pass_ok = crate::s2s::tokens_match(&gw.password, password);
             ok |= host_ok & pass_ok;
         }
         ok
@@ -699,7 +702,22 @@ impl Server {
         };
         handle.send(squit.to_line());
         handle.request_close();
+        // Keep the link down: the config-driven reconnect loop consults this
+        // and exits instead of re-dialing 30 seconds later.
+        self.links_admin_down.lock().insert(handle.name.clone());
         Some(handle.name.clone())
+    }
+
+    /// Whether an operator `SQUIT` has taken this peer down (blocks the
+    /// config-driven reconnect loop until `CONNECT` clears it).
+    #[must_use]
+    pub fn link_admin_down(&self, name: &str) -> bool {
+        self.links_admin_down.lock().contains(name)
+    }
+
+    /// Clear a peer's administrative-down mark (operator `CONNECT`).
+    pub fn clear_link_admin_down(&self, name: &str) {
+        self.links_admin_down.lock().remove(name);
     }
 
     /// The S2S UID for a local client (this server's SID + the client id).
@@ -1600,9 +1618,7 @@ impl Server {
         let folded_target = self.fold(target);
         let source_nick = source.split('!').next().unwrap_or(source);
         if let Some(client) = self.find_client(&folded_target) {
-            let remote_user = self.remote_users.get(&self.fold(source_nick));
-            let account = remote_user.as_ref().and_then(|u| u.account.clone());
-            let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
+            let (account, bot) = self.remote_source_meta(source_nick);
             // Keep the origin's msgid/time when the wire carried them, so the
             // message is identical on every server (cross-server msgid refs).
             let msgid = msgid.unwrap_or_else(|| self.history.next_msgid());
@@ -1655,14 +1671,23 @@ impl Server {
         }
     }
 
+    /// The account and bot flag of a relayed message's remote source. Extracts
+    /// both values and returns immediately, so the `remote_users` shard guard
+    /// is never held across delivery fan-out (which could block writers or
+    /// deadlock if a delivery path touched the same shard).
+    fn remote_source_meta(&self, source_nick: &str) -> (Option<String>, bool) {
+        match self.remote_users.get(&self.fold(source_nick)) {
+            Some(user) => (user.account.clone(), user.bot),
+            None => (None, false),
+        }
+    }
+
     /// Deliver a relayed `TAGMSG` (tags-only message) to local recipients and
     /// forward it onward: to peers with members for a channel target, or along
     /// the route to a remote user's server.
     pub fn deliver_tagmsg(&self, origin_sid: &str, source: &str, target: &str, tags: &str) {
         let source_nick = source.split('!').next().unwrap_or(source);
-        let remote_user = self.remote_users.get(&self.fold(source_nick));
-        let account = remote_user.as_ref().and_then(|u| u.account.clone());
-        let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
+        let (account, bot) = self.remote_source_meta(source_nick);
         if crate::casemap::is_valid_channel(target) {
             let folded = self.fold(target);
             let Some(channel) = self.find_channel(&folded) else {
@@ -2766,7 +2791,7 @@ impl Server {
                 '-' => adding = false,
                 'o' => user.oper = adding,
                 'i' => user.invisible = adding,
-                'B' => user.bot = adding,
+                c if c == crate::command::BOT_UMODE => user.bot = adding,
                 _ => {} // `+w` and friends are a local delivery choice
             }
         }
@@ -3706,9 +3731,7 @@ impl Server {
             }
         }
         let display = channel.data.lock().name.clone();
-        let remote_user = self.remote_users.get(&self.fold(source_nick));
-        let account = remote_user.as_ref().and_then(|u| u.account.clone());
-        let bot = remote_user.as_ref().map(|u| u.bot).unwrap_or(false);
+        let (account, bot) = self.remote_source_meta(source_nick);
         // Keep the origin's msgid/time when the wire carried them, so the
         // message is identical on every server (cross-server msgid refs).
         let msgid = msgid.unwrap_or_else(|| self.history.next_msgid());

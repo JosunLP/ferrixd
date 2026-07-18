@@ -55,21 +55,35 @@ pub async fn connect_now(
     connect_once(&peer, addr, &server, &client_config).await
 }
 
-/// Keep an outbound link to `peer` up, reconnecting on failure.
+/// Keep an outbound link to `peer` up, reconnecting on failure. The loop ends
+/// when the peer is removed from the config (`REHASH`) or taken down by an
+/// operator `SQUIT`; each retry re-reads the current config, so a `REHASH`ed
+/// address or fingerprint takes effect on the next attempt.
 pub async fn run_outbound(
-    peer: LinkConfig,
+    mut peer: LinkConfig,
     server: Arc<Server>,
     client_config: Arc<rustls::ClientConfig>,
 ) {
-    let Some(addr) = peer.connect else {
-        return; // accept-only link
-    };
     loop {
+        let Some(addr) = peer.connect else {
+            return; // accept-only link
+        };
         match connect_once(&peer, addr, &server, &client_config).await {
             Ok(()) => info!(peer = %peer.name, "S2S link closed"),
             Err(err) => warn!(peer = %peer.name, %err, "S2S link error"),
         }
         tokio::time::sleep(RECONNECT_DELAY).await;
+        if server.link_admin_down(&peer.name) {
+            info!(peer = %peer.name, "link closed by operator SQUIT; not reconnecting");
+            return;
+        }
+        match server.link_config_by_name(&peer.name) {
+            Some(current) => peer = current,
+            None => {
+                info!(peer = %peer.name, "link removed from config; not reconnecting");
+                return;
+            }
+        }
     }
 }
 

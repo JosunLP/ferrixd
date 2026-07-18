@@ -2129,6 +2129,28 @@ async fn webirc_rewrites_apparent_host() {
 }
 
 #[tokio::test]
+async fn webirc_rejected_when_not_first_command() {
+    let ctx = test_context();
+    ctx.server
+        .set_webirc_gateways(vec![ferrixd::config::WebircConfig {
+            name: "gw".to_owned(),
+            password: "s3cret".to_owned(),
+            hosts: vec!["127.0.0.1".to_owned()],
+        }]);
+    let mut bob = Conn::spawn(ctx, 9657);
+    // Any earlier traffic — even a numeric the server ignores — closes the
+    // first-command window; the following WEBIRC must be refused.
+    bob.send("001 x").await;
+    bob.send("WEBIRC s3cret gw client.example.test 198.51.100.7")
+        .await;
+    let err = bob.expect("ERROR").await;
+    assert!(
+        err.contains("out of sequence"),
+        "WEBIRC after another command was not refused: {err}"
+    );
+}
+
+#[tokio::test]
 async fn webirc_rejects_wrong_password() {
     let ctx = test_context();
     ctx.server
