@@ -157,6 +157,10 @@ WASM plugin host. See [WASM Plugins](/guide/plugins).
 | --- | --- | --- | --- |
 | `dir` | path | **required** | directory scanned for `*.wasm` at startup (sorted filename order) |
 | `fuel` | int | `5000000` | per-hook-call instruction budget |
+| `max_memory` | int | `16777216` | per-instance linear-memory cap, bytes |
+| `expose_private_messages` | bool | `false` | feed user-to-user DMs to the `ferrix_on_private_message` hook (a privacy decision — off unless you opt in) |
+| `state_dir` | path | *unset* | directory for host-managed per-plugin KV state files; unset → in-memory only |
+| `grants` | table | `{}` | per-plugin capability grants, plugin name → list of capability names (currently `"send_notice"`); deny-by-default |
 
 ## `[[links]]` — optional, repeatable
 

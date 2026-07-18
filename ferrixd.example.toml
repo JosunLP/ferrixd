@@ -170,7 +170,14 @@ recv_rate = 10
 # block channel messages. See crates/ferrixd/src/plugin.rs for the ABI.
 # [plugins]
 # dir = "/etc/ferrixd/plugins"
-# fuel = 5000000
+# fuel = 5000000                  # per-hook-call instruction budget
+# max_memory = 16777216           # per-instance linear-memory cap (bytes)
+# expose_private_messages = false # feed DMs to plugins (privacy: your call)
+# state_dir = "/var/lib/ferrixd/plugin-state"  # persist plugin KV stores
+#
+# Capability grants (deny-by-default): plugin file stem -> capabilities.
+# [plugins.grants]
+# "20-modbot" = ["send_notice"]
 
 # --- S2S peer links ---
 # Trust is the pinned TLS certificate fingerprint plus the shared password.

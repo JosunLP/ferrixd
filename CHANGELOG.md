@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-07-18
+
+### Added
+
+- **Plugin ABI v2** — the WASM plugin system grows from "observe and veto"
+  into a full extension surface, without loosening the sandbox
+  ([reference](https://josunlp.github.io/ferrixd/reference/plugin-abi)):
+  - **New veto hooks**: `ferrix_on_part`, `ferrix_on_kick`,
+    `ferrix_on_mode` (channel modes, after the op check),
+    `ferrix_on_invite` (local and remote-target), and
+    `ferrix_on_private_message` — the latter only when the operator opts in
+    via `plugins.expose_private_messages` (DM privacy stays the operator's
+    call, never the plugin author's).
+  - **Lifecycle hooks** (observe-only): `ferrix_on_connect`,
+    `ferrix_on_quit`, and `ferrix_on_load` (reports the plugin's granted
+    capabilities at startup).
+  - **Message rewriting**: `ferrix.set_text` lets a message hook replace
+    the text (censoring, formatting, expansion); the rewrite reaches echo,
+    history, later plugins in the chain, and the S2S relay. Host-side
+    sanitization strips CR/LF/NUL and caps the length, so a plugin can
+    never inject protocol frames.
+  - **Custom block reasons**: `ferrix.set_reason` customizes the `FAIL`
+    reply of a veto.
+  - **Bounded per-plugin key-value store**: `ferrix.kv_get`/`kv_set`
+    (256 keys / 64 KiB per plugin), optionally persisted to
+    `plugins.state_dir` by the host — plugins still never touch the
+    filesystem.
+  - **Read-only world queries**: `ferrix.channel_members`,
+    `ferrix.user_info`, and `ferrix.now_ms` for cooldowns and rate limits.
+  - **Capability-gated actions**: `ferrix.send_notice` sends server
+    NOTICEs to nicks or channels — only with a per-plugin
+    `[plugins.grants]` entry (deny-by-default), budgeted (4 per hook call,
+    120/minute), and executed after the sandboxed call returns;
+    server-originated notices do not re-enter the hooks.
+  - **Per-instance memory cap** (`plugins.max_memory`, default 16 MiB):
+    fuel already bounded CPU; `memory.grow` is now bounded too.
+  - **Per-plugin stats** (calls, blocks, traps) tracked by the host.
+  - Everything is backwards-compatible: all new hooks are optional
+    exports, all new host functions optional imports — 1.1 plugins load
+    and run unchanged.
+
 ## [1.1.0] — 2026-07-18
 
 ### Added
@@ -125,5 +166,6 @@ daemon is the product, the crates are its implementation.
 - Bounded SendQ, token-bucket rate limits, per-IP connection throttling, ping
   timeouts, K/D/G-lines, and HMAC host cloaking.
 
+[1.2.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.2.0
 [1.1.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.1.0
 [1.0.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.0.0

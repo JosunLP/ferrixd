@@ -4,6 +4,7 @@
 //! so a typo fails loudly at startup rather than silently disabling a security
 //! control.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -123,10 +124,31 @@ pub struct PluginsConfig {
     /// Per-hook-call fuel budget (WASM instructions).
     #[serde(default = "default_plugin_fuel")]
     pub fuel: u64,
+    /// Cap on each plugin instance's linear memory, in bytes.
+    #[serde(default = "default_plugin_memory")]
+    pub max_memory: usize,
+    /// Feed user-to-user private messages to the `ferrix_on_private_message`
+    /// hook. Off by default: exposing DMs to plugins is the operator's
+    /// privacy decision, never the plugin author's.
+    #[serde(default)]
+    pub expose_private_messages: bool,
+    /// Directory for host-managed per-plugin state files (the bounded
+    /// key-value store's persistence). Unset → plugin state is in-memory only.
+    #[serde(default)]
+    pub state_dir: Option<PathBuf>,
+    /// Capability grants, plugin name (file stem) → capability names
+    /// (currently: `send_notice`). Deny-by-default: an ungranted capability's
+    /// host function refuses and logs.
+    #[serde(default)]
+    pub grants: HashMap<String, Vec<String>>,
 }
 
 fn default_plugin_fuel() -> u64 {
     5_000_000
+}
+
+fn default_plugin_memory() -> usize {
+    16 * 1024 * 1024
 }
 
 fn default_load_limit() -> usize {

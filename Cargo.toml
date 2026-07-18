@@ -8,7 +8,7 @@ members = ["crates/ferrix-protocol", "crates/ferrixd"]
 exclude = ["fuzz", "loadtest"]
 
 [workspace.package]
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
@@ -91,7 +91,7 @@ thiserror = "2"
 anyhow = "1"
 
 # --- internal ---
-ferrix-protocol = { path = "crates/ferrix-protocol", version = "1.1.0" }
+ferrix-protocol = { path = "crates/ferrix-protocol", version = "1.2.0" }
 
 [profile.release]
 opt-level = 3

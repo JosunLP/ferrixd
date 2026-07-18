@@ -466,6 +466,14 @@ impl Session {
         // Notify anyone MONITORing this nick that it just came online.
         self.server
             .monitor_online(&self.entry.nick(), &self.entry.hostmask());
+
+        // Observe-only plugin hook: a client finished registration (cannot be
+        // vetoed — a K-Line/password refusal already returned above).
+        if let Some(plugins) = self.server.plugins() {
+            let account = self.entry.data.lock().account.clone();
+            let outcome = plugins.on_connect(&nick, &user, &host, account.as_deref());
+            self.server.apply_plugin_actions(outcome.actions);
+        }
     }
 
     /// Send `RPL_ISUPPORT` (005) with the tokens we advertise, split across as
