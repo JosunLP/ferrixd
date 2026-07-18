@@ -114,9 +114,10 @@ Both are operator commands (`481 ERR_NOPRIVILEGES` without the flag;
 `402 ERR_NOSUCHSERVER` for an unknown name). `REHASH` refreshes the stored
 `[[links]]` definitions and rebuilds the TLS client configuration, so
 `CONNECT` sees edits and uses updated certificates. The auto-dial loops
-pick up refreshed definitions on their next reconnect attempt and stop
-for links removed from the config; `REHASH` does not start a loop for a
-newly added link — use `CONNECT` to dial it.
+pick up refreshed definitions **and the reloaded certificate** on their
+next reconnect attempt, and stop for links removed from the config;
+`REHASH` does not start a loop for a newly added link — use `CONNECT` to
+dial it.
 
 ## What happens at link-up
 

@@ -74,6 +74,7 @@ What ferrixd advertises at registration, and what each token promises:
 | `MODES` | `6` | max mode changes per `MODE` |
 | `EXCEPTS` | `e` | ban exceptions supported |
 | `INVEX` | `I` | invite exceptions supported |
+| `EXTBAN` | `~,a` | extended bans: the `~a:<account>` account extban, honoured in `+b`/`+e`/`+I` |
 | `MAXLIST` | `b:100,e:100,I:100` | list-mode caps |
 | `NICKLEN` | `30` | max nick length |
 | `CHANNELLEN` | `50` | max channel-name length |
@@ -84,6 +85,8 @@ What ferrixd advertises at registration, and what each token promises:
 | `MAXCHANNELS` | `<max_channels>` | legacy spelling of the same |
 | `TARGMAX` | `PRIVMSG:1,NOTICE:1` | one target per message command |
 | `MONITOR` | `100` | MONITOR list capacity |
+| `WATCH` | `100` | legacy `WATCH` presence-list capacity (accepted as a `MONITOR` alias) |
+| `SILENCE` | `32` | server-side ignore-list capacity |
 | `WHOX` | — | `WHO` field selection (354) supported |
 | `CHATHISTORY` | `100` | max messages per CHATHISTORY request |
 | `MSGREFTYPES` | `timestamp,msgid` | selector types CHATHISTORY accepts |

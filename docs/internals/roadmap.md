@@ -68,7 +68,9 @@ holding the 1.x stability promise:
 - **TLS reload without restart.** `REHASH` now reloads the certificate and key
   for every TLS listener (client, `wss://`, and S2S) without dropping the
   process or any live connection; a bad reload leaves the previous material
-  armed.
+  armed. Outbound links also pick up the reloaded certificate on their next
+  (re)connect — the auto-dial reconnect loop included — so certificate rotation
+  no longer needs a manual re-link.
 
 ## Horizon
 
@@ -78,9 +80,6 @@ Direction, not commitment:
   ratified names are adopted as they land.
 - **Even richer plugin hooks.** Nick and topic events are covered; moderation
   actions (kick, mode, kline) are the natural next extension of the same ABI.
-- **Outbound-link certificate reload.** TLS reload covers the listeners today;
-  rotating the certificate an *existing outbound* link presents still needs a
-  re-link (`SQUIT` + `CONNECT`).
 
 If you want to influence any of this, open an issue —
 [GitHub](https://github.com/josunlp/ferrixd/issues).
