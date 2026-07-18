@@ -33,7 +33,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   untouched (IRCv3 SASL 3.2).
 - **Live link management** — operator `CONNECT <name>` dials a configured S2S
   peer at runtime, and `SQUIT <server> [:reason]` tears a directly-linked peer
-  (and its subtree) down through the usual netsplit path.
+  (and its subtree) down through the usual netsplit path. A `SQUIT` also stops
+  the peer's boot-time auto-dial loop until a `CONNECT` clears it, and the
+  auto-dial loops pick up `REHASH`ed link edits (and stop for removed links)
+  on their next attempt.
 - **Per-command metric histograms** — `/metrics` now exposes
   `ferrixd_command_duration_seconds`, a per-command handler-latency histogram.
   Label cardinality is bounded to the known command verbs plus `other`.
