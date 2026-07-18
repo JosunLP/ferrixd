@@ -28,7 +28,15 @@ complete Rust example: [WASM Plugins guide](/guide/plugins).
 | `memory` | linear memory | the host reads/writes event payloads here |
 | `alloc` | `(i32) -> i32` | return a pointer to `len` writable bytes; the host calls this before each event to place the payload |
 
-`alloc` may be a trivial bump allocator; the host never frees.
+`alloc` may be a trivial bump allocator; **the host never frees what it
+returns**. Exactly one payload is live per hook call (the host allocates,
+writes, calls the hook, and the hook consumes it before returning), so the
+safe idiom is to reuse a single fixed buffer. A plugin that instead hands
+out fresh memory on every call — and never reclaims it — grows its own
+linear memory monotonically until it hits `max_memory`, after which every
+`alloc` fails and the plugin fail-opens. That is bounded (it can never
+exhaust host RAM beyond the per-instance cap), but it silently disables the
+plugin, so manage the buffer deliberately.
 
 ## Hook exports (all optional)
 

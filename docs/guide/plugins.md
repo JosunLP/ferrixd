@@ -101,13 +101,20 @@ message filter:
 // Cargo.toml: crate-type = ["cdylib"]; build with:
 //   cargo build --release --target wasm32-unknown-unknown
 
-use std::alloc::{alloc as raw_alloc, Layout};
+// The host calls `alloc(len)` once before each hook, writes the event payload
+// there, then calls the hook — which reads it and returns. IMPORTANT: the host
+// never frees what `alloc` returns, so handing out fresh memory every call
+// would grow this plugin's linear memory monotonically toward `max_memory` and
+// then fail-open. Reuse one fixed buffer instead: exactly one payload is live
+// at a time, so nothing needs to accumulate.
+const BUF_CAP: usize = 16 * 1024; // ample for a chat line + JSON context
+static mut BUF: [u8; BUF_CAP] = [0; BUF_CAP];
 
-// Host writes event payloads into memory we hand out.
 #[no_mangle]
-pub extern "C" fn alloc(len: i32) -> i32 {
-    let layout = Layout::from_size_align(len as usize, 1).unwrap();
-    unsafe { raw_alloc(layout) as i32 }
+pub extern "C" fn alloc(_len: i32) -> i32 {
+    // Payloads are bounded by the server's line limit, so the fixed buffer is
+    // always large enough; the host bounds-checks its write against our memory.
+    unsafe { core::ptr::addr_of_mut!(BUF) as i32 }
 }
 
 // Log through the host (the only capability we're granted).

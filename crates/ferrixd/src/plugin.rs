@@ -1836,6 +1836,27 @@ mod tests {
     }
 
     #[test]
+    fn oversized_initial_memory_is_rejected_at_load() {
+        // The cap must bound the module's *declared* initial memory too, not
+        // just later growth — otherwise a plugin could reserve past the cap in
+        // one shot at instantiation. wasmi runs the resource limiter during
+        // memory construction, so this module fails to load.
+        const BIG_INITIAL: &str = r#"
+            (module
+              (memory (export "memory") 64)  ;; 64 pages = 4 MiB initial
+              (func (export "alloc") (param i32) (result i32) (i32.const 0)))
+        "#;
+        let wasm = wat::parse_str(BIG_INITIAL).unwrap();
+        let mut host = PluginHost::new(DEFAULT_FUEL);
+        host.set_max_memory(1024 * 1024); // 1 MiB cap < 4 MiB initial
+        assert!(
+            host.load_bytes("big", &wasm).is_err(),
+            "a module declaring more initial memory than the cap must be rejected"
+        );
+        assert_eq!(host.len(), 0, "the rejected plugin must not be registered");
+    }
+
+    #[test]
     fn on_load_reports_grants() {
         // The plugin records the on_load payload length in a global; blocks
         // messages iff on_load ran with a non-empty payload.
