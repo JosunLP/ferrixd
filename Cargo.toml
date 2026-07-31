@@ -58,8 +58,8 @@ parking_lot = "0.12"
 # --- auth / crypto ---
 argon2 = "0.5"
 subtle = "2"
-base64 = "0.22"
-sha1 = "0.10"
+base64 = "0.23"
+sha1 = "0.11"
 sha2 = "0.11"
 hmac = "0.13"
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
