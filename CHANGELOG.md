@@ -53,10 +53,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- A linked server may now be the **source** of a relayed channel or private
-  message, authorised like one of its own users (the route must lead back
-  to the peer the frame arrived on). This is what carries plugin-originated
-  server output across the network.
+- A linked server may now be the **source** of relayed state — a channel or
+  private message, and the mode, topic and kick frames — authorised like one
+  of its own users (the route must lead back to the peer the frame arrived
+  on). A source is read as a server only when it is a bare name: user frames
+  always carry the full `nick!user@host` mask, and nothing stops a nick from
+  colliding with a dotless server name. This is what carries plugin-originated
+  output across the network, attributed to the node whose plugin produced it.
 - **Dependencies refreshed across the tree.** The crypto stack moves onto the
   `digest` 0.11 generation — `argon2` 0.6 (with `password-hash` 0.6),
   `sha1` 0.11, and `base64` 0.23 — which retires the last duplicate

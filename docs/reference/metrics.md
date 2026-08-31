@@ -51,7 +51,7 @@ one series per plugin (`plugin` label, the file stem):
 | Metric | Help |
 | --- | --- |
 | `ferrixd_plugin_calls_total` | Plugin hook invocations |
-| `ferrixd_plugin_blocks_total` | Events blocked by a plugin |
+| `ferrixd_plugin_blocks_total` | Events blocked by a plugin (veto hooks only — an observe-only hook's return value is discarded and never counted) |
 | `ferrixd_plugin_traps_total` | Plugin traps and fuel exhaustions |
 
 `ferrixd_plugin_traps_total` is the one to alert on: the host fails **open**,

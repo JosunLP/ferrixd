@@ -724,14 +724,38 @@ impl Server {
                 None,
             );
         } else if let Some(entry) = self.find_client(&folded) {
+            // Tagged and recorded like the same message to a user on a linked
+            // server (which the receiving node records in the pair history), so
+            // CHATHISTORY replay and msgid references do not depend on which
+            // side of a link the recipient happens to sit on.
+            let now_ms = now_millis();
+            let msgid = self.history.next_msgid();
+            let target_nick = entry.nick();
             let body = Line::server(&self.info.name)
                 .command(command)
-                .param(&entry.nick())
+                .param(&target_nick)
                 .trailing(text)
                 .body();
-            let event =
-                crate::deliver::Event::new(body).with_time(format_server_time(now_millis()));
+            let event = crate::deliver::Event::new(body)
+                .with_time(format_server_time(now_ms))
+                .with_msgid(msgid.clone());
             crate::deliver::to_client(&entry, &event);
+            self.history.record(
+                &crate::history::pair_key(&self.fold(&self.info.name), &folded),
+                Arc::new(crate::history::StoredMessage {
+                    msgid,
+                    time_ms: now_ms,
+                    source: self.info.name.clone(),
+                    account: None,
+                    kind: if notice {
+                        crate::history::MessageKind::Notice
+                    } else {
+                        crate::history::MessageKind::PrivMsg
+                    },
+                    target: target_nick,
+                    text: text.to_owned(),
+                }),
+            );
         } else if let Some(user) = self.find_remote_user(&folded) {
             // A user on a linked server: route the message towards them.
             // `UserMessage.target` is resolved as a nickname by the receiving
@@ -768,7 +792,7 @@ impl Server {
         if !self.links.is_empty() {
             let msg = crate::s2s::LinkMessage::Skick {
                 channel: display,
-                source: "*".to_owned(),
+                source: self.info.name.clone(),
                 target: uid,
                 reason: reason.to_owned(),
             };
@@ -817,6 +841,8 @@ impl Server {
                 _ => {}
             }
         }
+        // Locally `*` renders as this server's own name; the propagated frame
+        // names it explicitly so peers attribute it here and not to themselves.
         let Some((applied_flags, applied_args, applied_wire)) =
             self.apply_mode_change(&display, "*", 0, flags, &wire)
         else {
@@ -832,7 +858,7 @@ impl Server {
         if !self.links.is_empty() {
             let msg = crate::s2s::LinkMessage::Smode {
                 channel: display.clone(),
-                source: "*".to_owned(),
+                source: self.info.name.clone(),
                 ts: self.channel_ts(&display),
                 flags: applied_flags,
                 args: applied_wire,
@@ -859,7 +885,7 @@ impl Server {
         if !self.links.is_empty() {
             let msg = crate::s2s::LinkMessage::Stopic {
                 channel: display,
-                source: "*".to_owned(),
+                source: self.info.name.clone(),
                 set_by: self.info.name.clone(),
                 set_at,
                 text: text.to_owned(),
@@ -1192,17 +1218,14 @@ impl Server {
     /// this peer. Prevents a peer forging traffic as another server's users.
     #[must_use]
     pub fn remote_source_authorized(&self, peer_sid: &str, source: &str) -> bool {
-        let nick = source.split('!').next().unwrap_or(source);
         // A server may speak for itself: plugin-originated NOTICEs and PRIVMSGs
-        // carry the originating server's *name* rather than a user's nick. It is
-        // authorised exactly like one of that server's users would be — the
-        // route must lead back to the peer the frame arrived on.
-        if let Some(sid) = self.sid_of_server_name(nick) {
-            return self
-                .remote_routes
-                .get(&sid)
-                .is_some_and(|owner| owner.as_str() == peer_sid);
+        // carry the originating server's name. Authorised exactly like one of
+        // that server's users would be — the route must lead back to the peer
+        // the frame arrived on.
+        if self.server_source_sid(source).is_some() {
+            return self.server_source_authorized(peer_sid, source);
         }
+        let nick = source.split('!').next().unwrap_or(source);
         let folded = self.fold(nick);
         match self.remote_users.get(&folded) {
             Some(user) => self
@@ -1213,20 +1236,29 @@ impl Server {
         }
     }
 
-    /// The SID of a linked server known by `name` (case-insensitive), if any.
-    /// Direct peers and servers behind them are both resolvable.
-    fn sid_of_server_name(&self, name: &str) -> Option<String> {
-        if let Some(link) = self
-            .links
-            .iter()
-            .find(|link| link.name.eq_ignore_ascii_case(name))
-        {
-            return Some(link.sid.clone());
+    /// The SID a server-originated S2S source names, if `source` is one.
+    ///
+    /// A frame from a user always carries the full `nick!user@host` mask (see
+    /// the `source_mask` every message path builds), so a bare name is the only
+    /// thing that can stand for a server. Insisting on that matters: nothing
+    /// requires a server name to contain a dot, so a nick and a server name can
+    /// collide, and without the check the real user's traffic would be rejected
+    /// as forged — while the server of that name could speak as the user.
+    fn server_source_sid(&self, source: &str) -> Option<String> {
+        if source.contains('!') {
+            return None;
         }
-        self.remote_servers
-            .iter()
-            .find(|server| server.name.eq_ignore_ascii_case(name))
-            .map(|server| server.sid.clone())
+        self.server_name_owner(source)
+    }
+
+    /// Whether `source` names a linked server reachable through `peer_sid`.
+    #[must_use]
+    pub fn server_source_authorized(&self, peer_sid: &str, source: &str) -> bool {
+        self.server_source_sid(source).is_some_and(|sid| {
+            self.remote_routes
+                .get(&sid)
+                .is_some_and(|owner| owner.as_str() == peer_sid)
+        })
     }
 
     /// Whether any peer links are up.
@@ -4028,7 +4060,7 @@ impl Server {
         // Server-originated output (another node's plugin) does not re-enter the
         // hooks — the same rule that keeps a plugin from feeding itself locally,
         // held across the link tree so two plugins cannot ping-pong.
-        let from_server = self.sid_of_server_name(source_nick).is_some();
+        let from_server = self.server_source_sid(source).is_some();
         // Relayed messages pass the same plugin policy as local ones; a block
         // also stops the onward relay so the whole (sub)tree stays consistent,
         // and a rewrite travels onward so every server shows the same text.
@@ -5208,6 +5240,111 @@ mod tests {
         assert_eq!(applied, vec!["bob".to_owned()]);
         assert_eq!(wire, vec!["2BBaaa".to_owned()]);
         assert!(channel.data.lock().remote_members["2BBaaa"].prefix.op);
+    }
+
+    #[test]
+    fn a_nick_colliding_with_a_server_name_is_still_judged_as_a_user() {
+        let server = test_server();
+        assert!(server.route_authorize("2BB", "2BB"));
+        assert!(
+            server
+                .accept_remote_server(
+                    "2BB",
+                    RemoteServer {
+                        sid: "3CC".to_owned(),
+                        name: "services".to_owned(),
+                        uplink: "2BB".to_owned(),
+                        description: "d".to_owned(),
+                    }
+                )
+                .is_ok()
+        );
+        // A user whose nick happens to equal that dotless server name. Nothing
+        // forbids either name, so the two must be told apart by shape: a user
+        // source always carries the full mask, a server source never does.
+        assert!(
+            server
+                .accept_remote_user(remote("3CC", "3CCaaa", "services"))
+                .is_none()
+        );
+
+        // The user, judged as a user — not shadowed by the server of that name.
+        assert!(server.remote_source_authorized("2BB", "services!u@h"));
+        assert!(!server.remote_source_authorized("9ZZ", "services!u@h"));
+        // The server, judged as a server.
+        assert!(server.remote_source_authorized("2BB", "services"));
+        assert!(!server.remote_source_authorized("9ZZ", "services"));
+    }
+
+    #[test]
+    fn propagated_plugin_actions_name_the_originating_server() {
+        use crate::plugin::Action;
+        let (server, _channel) = server_with_remote_channel();
+        let (tx, mut rx) = mpsc::channel(32);
+        server.register_link(LinkHandle::new(
+            "9ZZ".to_owned(),
+            "irc.z".to_owned(),
+            "peer".to_owned(),
+            tx,
+        ));
+
+        server.apply_plugin_actions(vec![
+            Action::Mode {
+                channel: "#general".to_owned(),
+                flags: "+m".to_owned(),
+                args: Vec::new(),
+            },
+            Action::Topic {
+                channel: "#general".to_owned(),
+                text: "quiet".to_owned(),
+            },
+        ]);
+
+        let mut frames = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            frames.push(String::from_utf8_lossy(&frame).into_owned());
+        }
+        let smode = frames
+            .iter()
+            .find(|f| f.contains("SMODE"))
+            .expect("the mode change is propagated");
+        let stopic = frames
+            .iter()
+            .find(|f| f.contains("STOPIC"))
+            .expect("the topic change is propagated");
+        // A `*` source would make the peer attribute the change to *itself* and
+        // treat it as a burst, which is excluded from channel history.
+        for frame in [smode, stopic] {
+            assert!(frame.contains("irc.a"), "not attributed: {frame}");
+            assert!(!frame.contains(" * "), "bursts as `*`: {frame}");
+        }
+    }
+
+    #[test]
+    fn plugin_message_to_a_local_user_is_tagged_and_recorded() {
+        use crate::plugin::Action;
+        let server = test_server();
+        let (entry, _rx) = ClientEntry::new(1, "h".to_owned(), 16);
+        {
+            let mut d = entry.data.lock();
+            d.nick = "alice".to_owned();
+            d.registered = true;
+        }
+        assert!(server.claim_nick("alice", &entry));
+
+        server.apply_plugin_actions(vec![Action::Message {
+            target: "alice".to_owned(),
+            text: "hello".to_owned(),
+        }]);
+
+        let key = crate::history::pair_key(&server.fold("irc.a"), &server.fold("alice"));
+        let stored = server
+            .history
+            .latest(&key, &crate::history::Selector::Latest, 10, false);
+        assert_eq!(stored.len(), 1, "the DM is replayable via CHATHISTORY");
+        assert_eq!(stored[0].text, "hello");
+        assert_eq!(stored[0].source, "irc.a");
+        assert!(!stored[0].msgid.is_empty());
     }
 
     #[test]

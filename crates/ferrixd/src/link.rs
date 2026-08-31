@@ -669,11 +669,15 @@ where
     Ok(())
 }
 
-/// Whether `source` (an acting user's uid, or `*` for the peer server itself,
-/// e.g. during a burst) is a legitimate origin for state arriving on the link
-/// from `peer_sid`.
+/// Whether `source` is a legitimate origin for state arriving on the link from
+/// `peer_sid`: an acting user's uid, `*` for the peer server itself (a burst),
+/// or the name of a server reachable through that peer — which is how a
+/// plugin-driven change is attributed to the node whose plugin made it, rather
+/// than restating anonymous state the way a burst does.
 fn link_source_authorized(server: &Server, peer_sid: &str, source: &str) -> bool {
-    source == "*" || server.remote_uid_authorized(peer_sid, source)
+    source == "*"
+        || server.remote_uid_authorized(peer_sid, source)
+        || server.server_source_authorized(peer_sid, source)
 }
 
 /// Drain the mailbox to the link socket.

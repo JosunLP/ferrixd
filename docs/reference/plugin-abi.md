@@ -134,7 +134,7 @@ itself.
 | `send_message` | `send_message` | `(tptr, tlen, ptr, len) -> i32` | queue a server PRIVMSG to a nick or channel |
 | `kick` | `kick` | `(cptr, clen, nptr, nlen, rptr, rlen) -> i32` | remove a nick from a channel; an empty reason becomes `Kicked by <plugin>` |
 | `set_mode` | `mode` | `(cptr, clen, mptr, mlen) -> i32` | apply a channel mode change, e.g. `"+b nick!*@*"` or `"+m"` |
-| `set_topic` | `topic` | `(cptr, clen, tptr, tlen) -> i32` | set a channel topic; empty text clears it |
+| `set_topic` | `topic` | `(cptr, clen, tptr, tlen) -> i32` | set a channel topic, truncated to the advertised `TOPICLEN` in characters; empty text clears it |
 | `kline` | `kline` | `(mptr, mlen, rptr, rlen) -> i32` | K-Line a `nick!user@host` glob and disconnect whoever it matches |
 
 Action budget: at most **4** actions per hook call and **120** per rolling
@@ -146,8 +146,8 @@ Bounds and shapes:
 - Targets are at most 64 bytes and may not contain whitespace, `,`, `*`,
   `?`, `!` or control characters. `kick`, `set_mode` and `set_topic`
   require a channel (`#…`).
-- A mode string is one `[+-]` flag word plus at most **8** simple
-  arguments (`"+bo mask nick"`). `o`/`v` arguments are nicks; the host
+- A mode string is one `[+-]` flag word (≤128 bytes) plus at most **8**
+  arguments of ≤64 bytes each (`"+bo mask nick"`). `o`/`v` arguments are nicks; the host
   translates them to network UIDs. A nick that resolves to nobody cancels
   the **whole** change rather than applying half of it.
 - A K-Line mask is at most 128 bytes, carries no whitespace and no leading
@@ -156,6 +156,8 @@ Bounds and shapes:
   with `KLINE` — is not propagated across the network.
 - Channel-directed notices and messages are relayed to the peers holding
   members, so plugin output reaches the whole channel, not just this node.
+  Kicks, modes and topics likewise reach the whole network, attributed to the
+  server whose plugin produced them and recorded in every node's history.
 - Actions the plugin queued during a call that later traps are discarded
   along with the rest of its output.
 

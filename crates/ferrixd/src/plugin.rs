@@ -77,12 +77,14 @@ const MAX_REASON_BYTES: usize = 200;
 const MAX_TARGET_BYTES: usize = 64;
 /// Longest ban mask a plugin can name in a `kline` action (bytes).
 const MAX_MASK_BYTES: usize = 128;
-/// Longest mode string (flags plus arguments) a plugin can apply (bytes).
-const MAX_MODE_BYTES: usize = 128;
+/// Longest flag word (`[+-]` and mode letters) a plugin can apply (bytes).
+/// The arguments are bounded separately by `MAX_MODE_ARGS` × `MAX_TARGET_BYTES`.
+const MAX_MODE_FLAGS_BYTES: usize = 128;
 /// Most arguments a plugin-supplied mode string may carry.
 const MAX_MODE_ARGS: usize = 8;
-/// Longest topic a plugin can set (bytes) — the server's own TOPICLEN.
-const MAX_TOPIC_BYTES: usize = 390;
+/// Generous byte cap for a topic before the character-based TOPICLEN cut
+/// below; four bytes per character is the UTF-8 maximum.
+const MAX_TOPIC_SCRATCH_BYTES: usize = crate::command::MAX_TOPIC_LEN * 4;
 /// Most random bytes one `ferrix.random_bytes` call yields.
 const MAX_RANDOM_BYTES: usize = 256;
 /// Actions (e.g. notices) a single hook call may queue.
@@ -279,6 +281,19 @@ enum Hook {
     Account,
     Timer,
     Load,
+}
+
+impl Hook {
+    /// Whether the host ignores this hook's return value. An observe-only hook
+    /// reports on something that already happened, so a non-zero return is not
+    /// a block — counting it as one would put phantom vetoes in
+    /// `ferrixd_plugin_blocks_total`.
+    fn is_observe(self) -> bool {
+        matches!(
+            self,
+            Hook::Connect | Hook::Quit | Hook::Away | Hook::Account | Hook::Timer | Hook::Load
+        )
+    }
 }
 
 /// Export-name table; also drives hook discovery at load time.
@@ -607,7 +622,7 @@ fn valid_mask(mask: &str) -> bool {
 fn parse_mode_string(raw: &str) -> Option<(String, Vec<String>)> {
     let mut words = raw.split_whitespace();
     let flags = words.next()?;
-    if flags.len() > MAX_MODE_BYTES
+    if flags.len() > MAX_MODE_FLAGS_BYTES
         || !flags
             .chars()
             .all(|c| c == '+' || c == '-' || c.is_ascii_alphabetic())
@@ -1187,6 +1202,7 @@ impl PluginInstance {
         }
         let result = match func.call(&mut self.store, (ptr, len)) {
             Ok(0) => Verdict::Allow,
+            Ok(_) if hook.is_observe() => Verdict::Allow,
             Ok(_) => {
                 self.blocks += 1;
                 Verdict::Block
@@ -1491,7 +1507,12 @@ fn register_host_api(linker: &mut Linker<HostState>) -> Result<()> {
                 if !valid_target(&channel) || !channel.starts_with('#') {
                     return 1;
                 }
-                let text = sanitize_text(&text, MAX_TOPIC_BYTES, false);
+                // TOPICLEN is advertised in characters and enforced that way
+                // for clients; a plugin is held to the same limit, or a CJK
+                // topic would be cut at roughly half the advertised length.
+                let text = sanitize_text(&text, MAX_TOPIC_SCRATCH_BYTES, false);
+                let text =
+                    crate::command::truncate_chars(&text, crate::command::MAX_TOPIC_LEN).to_owned();
                 if !state.take_action_slot() {
                     return 1;
                 }
@@ -2722,6 +2743,35 @@ mod tests {
         let mut host = PluginHost::new(DEFAULT_FUEL);
         host.load_bytes("loader", &wasm).unwrap();
         assert_eq!(host.on_message("x").verdict, Verdict::Block);
+    }
+
+    #[test]
+    fn observe_only_hooks_never_count_as_blocks() {
+        // Returns non-zero from both an observe-only and a veto hook. Only the
+        // veto is a block: the observe hook reports on something that already
+        // happened, and its return value is discarded.
+        const NOISY: &str = r#"
+            (module
+              (memory (export "memory") 1)
+              (global $next (mut i32) (i32.const 4096))
+              (func (export "alloc") (param i32) (result i32)
+                (global.get $next))
+              (func (export "ferrix_on_timer") (param i32 i32) (result i32)
+                (i32.const 1))
+              (func (export "ferrix_on_quit") (param i32 i32) (result i32)
+                (i32.const 1))
+              (func (export "ferrix_on_message") (param i32 i32) (result i32)
+                (i32.const 1)))
+        "#;
+        let host = host_with("noisy", &[], NOISY);
+
+        assert!(host.on_timer(1).actions.is_empty());
+        assert!(host.on_quit("alice", "bye").actions.is_empty());
+        assert_eq!(host.stats()[0].blocks, 0, "phantom vetoes in the metric");
+        assert_eq!(host.stats()[0].calls, 2);
+
+        assert_eq!(host.on_message("x").verdict, Verdict::Block);
+        assert_eq!(host.stats()[0].blocks, 1);
     }
 
     #[test]

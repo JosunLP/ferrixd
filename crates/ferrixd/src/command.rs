@@ -806,7 +806,7 @@ pub(crate) const BOT_UMODE: char = 'B';
 
 /// Truncate `text` to at most `max` characters (never splitting a UTF-8
 /// codepoint), as the advertised `*LEN` tokens promise.
-fn truncate_chars(text: &str, max: usize) -> &str {
+pub(crate) fn truncate_chars(text: &str, max: usize) -> &str {
     match text.char_indices().nth(max) {
         Some((end, _)) => &text[..end],
         None => text,
