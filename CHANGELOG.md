@@ -4,6 +4,74 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-08-31
+
+### Added
+
+- **Plugin ABI v3 — plugins that act.** The grants model from v2 grows from
+  one capability into six, and the read-only surface roughly doubles
+  ([reference](https://josunlp.github.io/ferrixd/reference/plugin-abi)).
+  Every sandbox property is unchanged: fail-open, fuel- and memory-bounded,
+  no ambient authority, deny-by-default.
+  - **Capability-gated actions**: `ferrix.send_message` (server PRIVMSG),
+    `ferrix.kick`, `ferrix.set_mode`, `ferrix.set_topic` and
+    `ferrix.kline`, joining `ferrix.send_notice`. Each needs its own grant
+    in `[plugins.grants]` (`send_message`, `kick`, `mode`, `topic`,
+    `kline`); an ungranted call refuses and logs. Actions stay budgeted at
+    4 per hook call and 120 per rolling minute, execute host-side after the
+    sandboxed call returns, and are discarded wholesale if that call traps.
+  - Actions are applied **as the server** and propagate over S2S: a
+    plugin's kick, mode change or topic reaches the whole network, not just
+    the node that ran it. Channel notices and messages are relayed to the
+    peers holding members. K-Lines stay node-local, exactly like the
+    `KLINE` command they mirror.
+  - A mode string is parsed and bounded host-side (one flag word, at most 8
+    arguments); `o`/`v` nicks are translated to network UIDs, and a nick
+    that resolves to nobody cancels the **whole** change rather than
+    applying half of it.
+  - **New hooks**: `ferrix_on_away` and `ferrix_on_account` (observe-only,
+    both with nullable payload fields), plus `ferrix_on_timer` — a periodic
+    tick driven by the new `[plugins].tick_secs`, for cooldown expiry and
+    scheduled announcements. The ticker is only spawned when a plugin
+    actually exports the hook.
+  - **New queries** (no grant needed): `ferrix.server_info`,
+    `ferrix.channel_info` (the `+k` key is never reported),
+    `ferrix.user_channels`, and `ferrix.random_bytes` — a sandbox has no
+    entropy of its own, and nonces rolled from `now_ms` are guessable.
+  - **Operator settings**: `[plugins.config.<plugin>]` is a plain string
+    table a plugin reads back through `ferrix.config_get`, so one `.wasm`
+    file ships to every network and is configured rather than recompiled.
+  - **Levelled logging**: `ferrix.log_at` picks debug/info/warn/error.
+  - Backwards-compatible: every new hook is an optional export and every
+    new host function an optional import, so ABI 1 and 2 plugins load and
+    run unchanged. `ferrix_on_load` now reports `"api":3`.
+- **Per-plugin metrics.** `/metrics` exposes `ferrixd_plugin_calls_total`,
+  `ferrixd_plugin_blocks_total` and `ferrixd_plugin_traps_total`, labelled by
+  plugin. The trap counter is the one to alert on: the host fails open, so a
+  trapping plugin stops enforcing its policy without anything else breaking.
+  Cardinality is bounded by the number of `.wasm` files loaded.
+
+### Changed
+
+- A linked server may now be the **source** of relayed state — a channel or
+  private message, and the mode, topic and kick frames — authorised like one
+  of its own users (the route must lead back to the peer the frame arrived
+  on). A source is read as a server only when it is a bare name: user frames
+  always carry the full `nick!user@host` mask, and nothing stops a nick from
+  colliding with a dotless server name. This is what carries plugin-originated
+  output across the network, attributed to the node whose plugin produced it.
+- **Dependencies refreshed across the tree.** The crypto stack moves onto the
+  `digest` 0.11 generation — `argon2` 0.6 (with `password-hash` 0.6),
+  `sha1` 0.11, and `base64` 0.23 — which retires the last duplicate
+  `digest` 0.10 / `generic-array` / `rand_core` 0.6 copies from the
+  dependency graph. `tokio` 1.53, `rustls` 0.23.43, `clap` 4.6.6,
+  `rusqlite` 0.40.2, `wat`/`wasm-encoder` 258, `thiserror` 2.0.20, and the
+  remaining crates move to their latest compatible releases. Stored Argon2id
+  PHC hashes stay valid — no operator action is required.
+- **Rust edition 2024.** The workspace moves from edition 2021 to 2024; the
+  minimum supported toolchain is unchanged (`rust-version = "1.90"`). Purely
+  internal — no configuration, protocol, CLI, or plugin-ABI surface changes.
+
 ## [1.2.0] — 2026-07-18
 
 ### Added
@@ -166,6 +234,7 @@ daemon is the product, the crates are its implementation.
 - Bounded SendQ, token-bucket rate limits, per-IP connection throttling, ping
   timeouts, K/D/G-lines, and HMAC host cloaking.
 
+[1.3.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.3.0
 [1.2.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.2.0
 [1.1.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.1.0
 [1.0.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.0.0

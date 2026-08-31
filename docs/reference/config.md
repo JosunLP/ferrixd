@@ -160,7 +160,23 @@ WASM plugin host. See [WASM Plugins](/guide/plugins).
 | `max_memory` | int | `16777216` | per-instance linear-memory cap, bytes |
 | `expose_private_messages` | bool | `false` | feed user-to-user DMs to the `ferrix_on_private_message` hook (a privacy decision — off unless you opt in) |
 | `state_dir` | path | *unset* | directory for host-managed per-plugin KV state files; unset → in-memory only |
-| `grants` | table | `{}` | per-plugin capability grants, plugin name → list of capability names (currently `"send_notice"`); deny-by-default |
+| `tick_secs` | int | `0` | seconds between `ferrix_on_timer` calls; `0` disables the tick (as does no plugin exporting the hook) |
+| `grants` | table | `{}` | per-plugin capability grants, plugin name → list of capability names; deny-by-default (see below) |
+| `config` | table | `{}` | per-plugin operator settings, plugin name → string table, read back through `ferrix.config_get` |
+
+Capability names for `grants`: `send_notice`, `send_message`, `kick`, `mode`,
+`topic`, `kline`. An unrecognised name is logged and ignored. Grant the
+narrowest set that does the job — `kline` bans a hostmask and disconnects
+everyone it matches.
+
+```toml
+[plugins.grants]
+"20-modbot" = ["send_notice", "kick", "mode"]
+
+[plugins.config."20-modbot"]
+report_channel = "#ops"
+threshold = "5"
+```
 
 ## `[[links]]` — optional, repeatable
 

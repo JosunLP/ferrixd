@@ -137,10 +137,20 @@ pub struct PluginsConfig {
     #[serde(default)]
     pub state_dir: Option<PathBuf>,
     /// Capability grants, plugin name (file stem) → capability names
-    /// (currently: `send_notice`). Deny-by-default: an ungranted capability's
-    /// host function refuses and logs.
+    /// (`send_notice`, `send_message`, `kick`, `mode`, `topic`, `kline`).
+    /// Deny-by-default: an ungranted capability's host function refuses and
+    /// logs.
     #[serde(default)]
     pub grants: HashMap<String, Vec<String>>,
+    /// Per-plugin operator settings, plugin name (file stem) → key/value pairs,
+    /// readable by the plugin through `ferrix.config_get`. Lets one `.wasm`
+    /// file be deployed with site-specific parameters instead of recompiled.
+    #[serde(default)]
+    pub config: HashMap<String, HashMap<String, String>>,
+    /// Interval in seconds between `ferrix_on_timer` calls. `0` (the default)
+    /// disables the tick; the hook is also skipped when no plugin exports it.
+    #[serde(default)]
+    pub tick_secs: u64,
 }
 
 fn default_plugin_fuel() -> u64 {
@@ -514,22 +524,24 @@ impl Config {
     fn validate(&self) -> Result<(), ConfigError> {
         // A plaintext listener on a non-loopback address is refused unless the
         // operator explicitly opts in.
-        if let Some(addr) = self.server.plain_bind {
-            if !addr.ip().is_loopback() && !self.server.allow_plain_nonlocal {
-                return Err(ConfigError::Invalid(format!(
-                    "plain_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
+        if let Some(addr) = self.server.plain_bind
+            && !addr.ip().is_loopback()
+            && !self.server.allow_plain_nonlocal
+        {
+            return Err(ConfigError::Invalid(format!(
+                "plain_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
                      cleartext on a public interface (not recommended)"
-                )));
-            }
+            )));
         }
         // The plaintext WebSocket listener is held to the same rule.
-        if let Some(addr) = self.server.ws_bind {
-            if !addr.ip().is_loopback() && !self.server.allow_plain_nonlocal {
-                return Err(ConfigError::Invalid(format!(
-                    "ws_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
+        if let Some(addr) = self.server.ws_bind
+            && !addr.ip().is_loopback()
+            && !self.server.allow_plain_nonlocal
+        {
+            return Err(ConfigError::Invalid(format!(
+                "ws_bind {addr} is not loopback; set allow_plain_nonlocal = true to permit \
                      cleartext WebSocket on a public interface (use wss_bind instead)"
-                )));
-            }
+            )));
         }
 
         // TLS must have a way to obtain a certificate.
@@ -550,15 +562,15 @@ impl Config {
         // for that account at startup; fail loudly here instead (so `ferrixd
         // check` catches it before a restart does).
         for account in &self.accounts {
-            if let Some(token) = &account.scram {
-                if crate::scram::ScramCreds::decode(token).is_none() {
-                    return Err(ConfigError::Invalid(format!(
-                        "account {}: malformed scram credential (expected \
+            if let Some(token) = &account.scram
+                && crate::scram::ScramCreds::decode(token).is_none()
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "account {}: malformed scram credential (expected \
                          <iterations>:<b64 salt>:<b64 stored_key>:<b64 server_key>, \
                          as printed by `ferrixd hash-password --toml`)",
-                        account.name
-                    )));
-                }
+                    account.name
+                )));
             }
         }
 

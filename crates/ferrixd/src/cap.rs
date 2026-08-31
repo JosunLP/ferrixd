@@ -137,7 +137,9 @@ impl Cap {
         match self {
             Cap::Sasl => format!("sasl={}", SASL_MECHANISMS.join(",")),
             Cap::Multiline => {
-                format!("draft/multiline=max-bytes={MULTILINE_MAX_BYTES},max-lines={MULTILINE_MAX_LINES}")
+                format!(
+                    "draft/multiline=max-bytes={MULTILINE_MAX_BYTES},max-lines={MULTILINE_MAX_LINES}"
+                )
             }
             // The registration policy a client must satisfy (IRCv3
             // draft/account-registration): no e-mail, and any account name.

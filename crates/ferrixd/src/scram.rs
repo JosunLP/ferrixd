@@ -5,8 +5,8 @@
 //! server never sees the password during authentication — it verifies the
 //! client's proof against `StoredKey` and returns a `ServerSignature`.
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 

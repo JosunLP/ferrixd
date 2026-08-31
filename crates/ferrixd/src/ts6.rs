@@ -27,7 +27,7 @@ use bytes::Bytes;
 use ferrix_protocol::{Command, Message};
 
 use crate::s2s::LinkMessage;
-use crate::state::{now_unix, MemberPrefix, Server};
+use crate::state::{MemberPrefix, Server, now_unix};
 use crate::wire::Line;
 
 /// The CAPAB set we advertise: quit storms, ban/except/invex bursts, extended
@@ -550,10 +550,8 @@ fn translate_mode_args(
                 }
             }
             'l' => {
-                if adding {
-                    if let Some(arg) = rest.next() {
-                        out.push(arg.clone());
-                    }
+                if adding && let Some(arg) = rest.next() {
+                    out.push(arg.clone());
                 }
             }
             'b' | 'e' | 'I' => {
@@ -630,33 +628,37 @@ pub fn encode_outbound(
             };
             let ts = now_unix().to_string();
             if peer_caps.contains("EUID") {
-                vec![Line::server(sid)
-                    .command("EUID")
-                    .param(nick)
-                    .param("2")
-                    .param(&ts)
-                    .param("+i")
-                    .param(user)
-                    .param(host)
-                    .param("0")
-                    .param(&alias)
-                    .param(host)
-                    .param(account)
-                    .trailing(realname)
-                    .build()]
+                vec![
+                    Line::server(sid)
+                        .command("EUID")
+                        .param(nick)
+                        .param("2")
+                        .param(&ts)
+                        .param("+i")
+                        .param(user)
+                        .param(host)
+                        .param("0")
+                        .param(&alias)
+                        .param(host)
+                        .param(account)
+                        .trailing(realname)
+                        .build(),
+                ]
             } else {
-                let mut lines = vec![Line::server(sid)
-                    .command("UID")
-                    .param(nick)
-                    .param("2")
-                    .param(&ts)
-                    .param("+i")
-                    .param(user)
-                    .param(host)
-                    .param("0")
-                    .param(&alias)
-                    .trailing(realname)
-                    .build()];
+                let mut lines = vec![
+                    Line::server(sid)
+                        .command("UID")
+                        .param(nick)
+                        .param("2")
+                        .param(&ts)
+                        .param("+i")
+                        .param(user)
+                        .param(host)
+                        .param("0")
+                        .param(&alias)
+                        .trailing(realname)
+                        .build(),
+                ];
                 if account != "*" {
                     lines.push(
                         Line::server(our_sid)
@@ -672,18 +674,22 @@ pub fn encode_outbound(
             }
         }
         LinkMessage::Nick { uid, nick } => match mapper.to_ts6(uid) {
-            Some(alias) => vec![Line::server(&alias)
-                .command("NICK")
-                .param(nick)
-                .trailing(&now_unix().to_string())
-                .build()],
+            Some(alias) => vec![
+                Line::server(&alias)
+                    .command("NICK")
+                    .param(nick)
+                    .trailing(&now_unix().to_string())
+                    .build(),
+            ],
             None => Vec::new(),
         },
         LinkMessage::Quit { uid, reason } => match mapper.to_ts6(uid) {
-            Some(alias) => vec![Line::server(&alias)
-                .command("QUIT")
-                .trailing(reason)
-                .build()],
+            Some(alias) => vec![
+                Line::server(&alias)
+                    .command("QUIT")
+                    .trailing(reason)
+                    .build(),
+            ],
             None => Vec::new(),
         },
         // TS6 has no msgid/server-time on the wire; the origin identity is
@@ -701,11 +707,13 @@ pub fn encode_outbound(
             ) else {
                 return Vec::new();
             };
-            vec![Line::server(&src)
-                .command(if *notice { "NOTICE" } else { "PRIVMSG" })
-                .param(&dst)
-                .trailing(text)
-                .build()]
+            vec![
+                Line::server(&src)
+                    .command(if *notice { "NOTICE" } else { "PRIVMSG" })
+                    .param(&dst)
+                    .trailing(text)
+                    .build(),
+            ]
         }
         LinkMessage::ChanMessage {
             source,
@@ -714,11 +722,13 @@ pub fn encode_outbound(
             text,
             ..
         } => match uid_for_source(mapper, source) {
-            Some(src) => vec![Line::server(&src)
-                .command(if *notice { "NOTICE" } else { "PRIVMSG" })
-                .param(channel)
-                .trailing(text)
-                .build()],
+            Some(src) => vec![
+                Line::server(&src)
+                    .command(if *notice { "NOTICE" } else { "PRIVMSG" })
+                    .param(channel)
+                    .trailing(text)
+                    .build(),
+            ],
             None => Vec::new(),
         },
         LinkMessage::Sjoin {
@@ -739,13 +749,15 @@ pub fn encode_outbound(
                 // TS6 carries the channel timestamp in SJOIN; use the one the
                 // frame carries, falling back to our own view of the channel.
                 let ts = if *ts > 0 { *ts } else { channel_ts(channel) };
-                vec![Line::server(our_sid)
-                    .command("SJOIN")
-                    .param(&ts.to_string())
-                    .param(channel)
-                    .param("+")
-                    .trailing(&member)
-                    .build()]
+                vec![
+                    Line::server(our_sid)
+                        .command("SJOIN")
+                        .param(&ts.to_string())
+                        .param(channel)
+                        .param("+")
+                        .trailing(&member)
+                        .build(),
+                ]
             }
             None => Vec::new(),
         },
@@ -754,11 +766,13 @@ pub fn encode_outbound(
             uid,
             reason,
         } => match mapper.to_ts6(uid) {
-            Some(alias) => vec![Line::server(&alias)
-                .command("PART")
-                .param(channel)
-                .trailing(reason)
-                .build()],
+            Some(alias) => vec![
+                Line::server(&alias)
+                    .command("PART")
+                    .param(channel)
+                    .trailing(reason)
+                    .build(),
+            ],
             None => Vec::new(),
         },
         LinkMessage::Stopic {
@@ -773,20 +787,24 @@ pub fn encode_outbound(
                 if !peer_caps.contains("TB") || text.is_empty() {
                     return Vec::new();
                 }
-                return vec![Line::server(our_sid)
-                    .command("TB")
-                    .param(channel)
-                    .param(&set_at.to_string())
-                    .param(set_by)
-                    .trailing(text)
-                    .build()];
+                return vec![
+                    Line::server(our_sid)
+                        .command("TB")
+                        .param(channel)
+                        .param(&set_at.to_string())
+                        .param(set_by)
+                        .trailing(text)
+                        .build(),
+                ];
             }
             match mapper.to_ts6(source) {
-                Some(src) => vec![Line::server(&src)
-                    .command("TOPIC")
-                    .param(channel)
-                    .trailing(text)
-                    .build()],
+                Some(src) => vec![
+                    Line::server(&src)
+                        .command("TOPIC")
+                        .param(channel)
+                        .trailing(text)
+                        .build(),
+                ],
                 None => Vec::new(),
             }
         }
@@ -831,12 +849,14 @@ pub fn encode_outbound(
             let (Some(src), Some(dst)) = (src, mapper.to_ts6(target)) else {
                 return Vec::new();
             };
-            vec![Line::server(&src)
-                .command("KICK")
-                .param(channel)
-                .param(&dst)
-                .trailing(reason)
-                .build()]
+            vec![
+                Line::server(&src)
+                    .command("KICK")
+                    .param(channel)
+                    .param(&dst)
+                    .trailing(reason)
+                    .build(),
+            ]
         }
         LinkMessage::Saway { uid, reason } => match mapper.to_ts6(uid) {
             Some(alias) => {
@@ -864,11 +884,13 @@ pub fn encode_outbound(
             None => Vec::new(),
         },
         LinkMessage::Kill { uid, reason } => match mapper.to_ts6(uid) {
-            Some(alias) => vec![Line::server(our_sid)
-                .command("KILL")
-                .param(&alias)
-                .trailing(&format!("{our_name} ({reason})"))
-                .build()],
+            Some(alias) => vec![
+                Line::server(our_sid)
+                    .command("KILL")
+                    .param(&alias)
+                    .trailing(&format!("{our_name} ({reason})"))
+                    .build(),
+            ],
             None => Vec::new(),
         },
         // Realname changes have no TS6 equivalent; drop them at the bridge.
@@ -876,11 +898,13 @@ pub fn encode_outbound(
         // Umodes: only `+o`/`-o` has a TS6 equivalent worth sending, as a user
         // MODE line from the user itself.
         LinkMessage::Sumode { uid, flags } => match mapper.to_ts6(uid) {
-            Some(alias) if flags.contains('o') => vec![Line::server(&alias)
-                .command("MODE")
-                .param(&alias)
-                .param(if flags.starts_with('-') { "-o" } else { "+o" })
-                .build()],
+            Some(alias) if flags.contains('o') => vec![
+                Line::server(&alias)
+                    .command("MODE")
+                    .param(&alias)
+                    .param(if flags.starts_with('-') { "-o" } else { "+o" })
+                    .build(),
+            ],
             _ => Vec::new(),
         },
         LinkMessage::Sknock {
@@ -898,30 +922,36 @@ pub fn encode_outbound(
         | LinkMessage::TagMessage { .. } => Vec::new(),
         LinkMessage::Schghost { uid, host } => match mapper.to_ts6(uid) {
             // charybdis-family servers accept an encapsulated CHGHOST.
-            Some(alias) => vec![Line::server(our_sid)
-                .command("ENCAP")
-                .param("*")
-                .param("CHGHOST")
-                .param(&alias)
-                .param(host)
-                .build()],
+            Some(alias) => vec![
+                Line::server(our_sid)
+                    .command("ENCAP")
+                    .param("*")
+                    .param("CHGHOST")
+                    .param(&alias)
+                    .param(host)
+                    .build(),
+            ],
             None => Vec::new(),
         },
-        LinkMessage::Swallops { source, text } => vec![Line::server(source)
-            .command("WALLOPS")
-            .trailing(text)
-            .build()],
+        LinkMessage::Swallops { source, text } => vec![
+            Line::server(source)
+                .command("WALLOPS")
+                .trailing(text)
+                .build(),
+        ],
         LinkMessage::Sinvite {
             source,
             target,
             channel,
         } => match (mapper.to_ts6(source), mapper.to_ts6(target)) {
-            (Some(src), Some(tgt)) => vec![Line::server(&src)
-                .command("INVITE")
-                .param(&tgt)
-                .param(channel)
-                .param(&channel_ts(channel).to_string())
-                .build()],
+            (Some(src), Some(tgt)) => vec![
+                Line::server(&src)
+                    .command("INVITE")
+                    .param(&tgt)
+                    .param(channel)
+                    .param(&channel_ts(channel).to_string())
+                    .build(),
+            ],
             _ => Vec::new(),
         },
         // Network bans are not bridged into a TS6 network (their KLINE model
@@ -932,27 +962,35 @@ pub fn encode_outbound(
             sid,
             uplink,
             description,
-        } => vec![Line::server(uplink)
-            .command("SID")
-            .param(name)
-            .param("2")
-            .param(sid)
-            .trailing(description)
-            .build()],
-        LinkMessage::Squit { sid, reason } => vec![Line::server(our_sid)
-            .command("SQUIT")
-            .param(sid)
-            .trailing(reason)
-            .build()],
-        LinkMessage::Ping { token } => vec![Line::server(our_sid)
-            .command("PING")
-            .trailing(token)
-            .build()],
-        LinkMessage::Pong { token } => vec![Line::server(our_sid)
-            .command("PONG")
-            .param(our_name)
-            .trailing(token)
-            .build()],
+        } => vec![
+            Line::server(uplink)
+                .command("SID")
+                .param(name)
+                .param("2")
+                .param(sid)
+                .trailing(description)
+                .build(),
+        ],
+        LinkMessage::Squit { sid, reason } => vec![
+            Line::server(our_sid)
+                .command("SQUIT")
+                .param(sid)
+                .trailing(reason)
+                .build(),
+        ],
+        LinkMessage::Ping { token } => vec![
+            Line::server(our_sid)
+                .command("PING")
+                .trailing(token)
+                .build(),
+        ],
+        LinkMessage::Pong { token } => vec![
+            Line::server(our_sid)
+                .command("PONG")
+                .param(our_name)
+                .trailing(token)
+                .build(),
+        ],
         LinkMessage::Error { reason } => {
             vec![Line::bare().command("ERROR").trailing(reason).build()]
         }
@@ -1033,7 +1071,9 @@ mod tests {
     #[test]
     fn parses_burst_and_traffic() {
         assert_eq!(
-            parse_line(":42X EUID alice 1 1748000000 +i ~alice host.example 10.0.0.1 42XAAAAAB real.example alice :Alice"),
+            parse_line(
+                ":42X EUID alice 1 1748000000 +i ~alice host.example 10.0.0.1 42XAAAAAB real.example alice :Alice"
+            ),
             Ts6In::Euid {
                 sid: Some("42X".into()),
                 uid: "42XAAAAAB".into(),

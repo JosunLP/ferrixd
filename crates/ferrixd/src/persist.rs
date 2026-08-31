@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use tokio::sync::mpsc;
 use tracing::warn;
 

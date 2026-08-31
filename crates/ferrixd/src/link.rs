@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use ferrix_protocol::Message;
 use futures_util::{SinkExt, StreamExt};
@@ -28,7 +28,7 @@ use tracing::{debug, info, warn};
 use crate::codec::IrcCodec;
 use crate::config::{LinkConfig, LinkProtocol};
 use crate::s2s::LinkMessage;
-use crate::state::{now_unix, LinkHandle, MemberPrefix, RemoteServer, RemoteUser, Server};
+use crate::state::{LinkHandle, MemberPrefix, RemoteServer, RemoteUser, Server, now_unix};
 use crate::ts6::{self, Ts6In, UidMapper};
 use crate::wire::Line;
 
@@ -669,11 +669,15 @@ where
     Ok(())
 }
 
-/// Whether `source` (an acting user's uid, or `*` for the peer server itself,
-/// e.g. during a burst) is a legitimate origin for state arriving on the link
-/// from `peer_sid`.
+/// Whether `source` is a legitimate origin for state arriving on the link from
+/// `peer_sid`: an acting user's uid, `*` for the peer server itself (a burst),
+/// or the name of a server reachable through that peer — which is how a
+/// plugin-driven change is attributed to the node whose plugin made it, rather
+/// than restating anonymous state the way a burst does.
 fn link_source_authorized(server: &Server, peer_sid: &str, source: &str) -> bool {
-    source == "*" || server.remote_uid_authorized(peer_sid, source)
+    source == "*"
+        || server.remote_uid_authorized(peer_sid, source)
+        || server.server_source_authorized(peer_sid, source)
 }
 
 /// Drain the mailbox to the link socket.

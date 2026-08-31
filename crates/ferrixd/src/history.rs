@@ -219,8 +219,8 @@ impl History {
     #[must_use]
     pub fn find(&self, folded_target: &str, msgid: &str) -> Option<Arc<StoredMessage>> {
         let ring = self.log.get(folded_target)?;
-        let found = ring.lock().iter().find(|m| m.msgid == msgid).cloned();
-        found
+
+        ring.lock().iter().find(|m| m.msgid == msgid).cloned()
     }
 
     /// Remove a message by msgid from the ring and durable storage
@@ -232,13 +232,13 @@ impl History {
             let index = ring.iter().position(|m| m.msgid == msgid)?;
             ring.remove(index)
         };
-        if removed.is_some() {
-            if let Some(sink) = self.persist.get() {
-                let _ = sink.send(PersistOp::Delete {
-                    folded: folded_target.to_owned(),
-                    msgid: msgid.to_owned(),
-                });
-            }
+        if removed.is_some()
+            && let Some(sink) = self.persist.get()
+        {
+            let _ = sink.send(PersistOp::Delete {
+                folded: folded_target.to_owned(),
+                msgid: msgid.to_owned(),
+            });
         }
         removed
     }

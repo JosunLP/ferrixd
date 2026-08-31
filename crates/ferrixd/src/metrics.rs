@@ -7,8 +7,8 @@
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
@@ -176,6 +176,62 @@ pub fn render(server: &Server) -> String {
     );
 
     render_command_histogram(&mut out, &m.commands);
+    render_plugin_stats(&mut out, server);
+    out
+}
+
+/// Append the per-plugin counters. Operators who grant a plugin `kick` or
+/// `kline` want to see it working — and, more importantly, want to alert when
+/// it starts trapping, because a trapping plugin fails *open* and silently
+/// stops enforcing whatever policy it was loaded for.
+fn render_plugin_stats(out: &mut String, server: &Server) {
+    let Some(stats) = server.plugins().map(crate::plugin::PluginHost::stats) else {
+        return;
+    };
+    if stats.is_empty() {
+        return;
+    }
+    for (name, help, pick) in [
+        (
+            "plugin_calls_total",
+            "Plugin hook invocations",
+            (|s: &crate::plugin::PluginStats| s.calls) as fn(&crate::plugin::PluginStats) -> u64,
+        ),
+        (
+            "plugin_blocks_total",
+            "Events blocked by a plugin",
+            |s: &crate::plugin::PluginStats| s.blocks,
+        ),
+        (
+            "plugin_traps_total",
+            "Plugin traps and fuel exhaustions (each one failed open)",
+            |s: &crate::plugin::PluginStats| s.traps,
+        ),
+    ] {
+        let _ = writeln!(out, "# HELP ferrixd_{name} {help}");
+        let _ = writeln!(out, "# TYPE ferrixd_{name} counter");
+        for stat in &stats {
+            let _ = writeln!(
+                out,
+                "ferrixd_{name}{{plugin=\"{}\"}} {}",
+                escape_label(&stat.name),
+                pick(stat)
+            );
+        }
+    }
+}
+
+/// Escape a Prometheus label value (backslash, quote, newline).
+fn escape_label(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
     out
 }
 
@@ -271,9 +327,8 @@ mod tests {
     use crate::casemap::CaseMapping;
     use crate::state::ServerInfo;
 
-    #[test]
-    fn render_has_expected_series() {
-        let server = Server::new(ServerInfo {
+    fn test_server() -> Arc<Server> {
+        Server::new(ServerInfo {
             name: "t".into(),
             sid: "42T".into(),
             network: "n".into(),
@@ -287,7 +342,12 @@ mod tests {
             max_channels: 50,
             cloak_key: None,
             sts: None,
-        });
+        })
+    }
+
+    #[test]
+    fn render_has_expected_series() {
+        let server = test_server();
         Metrics::incr(&server.metrics.connections_total);
         let text = render(&server);
         assert!(text.contains("ferrixd_connections_total 1"));
@@ -296,30 +356,73 @@ mod tests {
     }
 
     #[test]
+    fn plugin_counters_appear_only_with_plugins_loaded() {
+        let server = test_server();
+        // No plugin host attached: not even the HELP lines are emitted.
+        assert!(!render(&server).contains("ferrixd_plugin_calls_total"));
+
+        // A plugin that blocks every message it sees.
+        const BLOCKER: &str = r#"
+            (module
+              (memory (export "memory") 1)
+              (global $next (mut i32) (i32.const 4096))
+              (func (export "alloc") (param i32) (result i32)
+                (global.get $next))
+              (func (export "ferrix_on_message") (param i32 i32) (result i32)
+                (i32.const 1)))
+        "#;
+        let wasm = wat::parse_str(BLOCKER).unwrap();
+        let mut host = crate::plugin::PluginHost::new(crate::plugin::DEFAULT_FUEL);
+        host.load_bytes("guard", &wasm).unwrap();
+        assert_eq!(host.on_message("hi").verdict, crate::plugin::Verdict::Block);
+        server.attach_plugins(host);
+
+        let text = render(&server);
+        assert!(text.contains("# TYPE ferrixd_plugin_calls_total counter"));
+        assert!(text.contains("ferrixd_plugin_calls_total{plugin=\"guard\"} 1"));
+        assert!(text.contains("ferrixd_plugin_blocks_total{plugin=\"guard\"} 1"));
+        assert!(text.contains("ferrixd_plugin_traps_total{plugin=\"guard\"} 0"));
+    }
+
+    #[test]
+    fn label_values_are_escaped() {
+        assert_eq!(escape_label(r#"a"b\c"#), r#"a\"b\\c"#);
+    }
+
+    #[test]
     fn command_histogram_is_cumulative_and_bounded() {
         let commands = CommandMetrics::default();
         commands.observe("JOIN", 30); // first bucket (<= 50us)
         commands.observe("JOIN", 700); // <= 1000us
-                                       // An unknown verb must have been interned to "other" by the caller; the
-                                       // histogram itself just stores whatever static label it is handed.
+        // An unknown verb must have been interned to "other" by the caller; the
+        // histogram itself just stores whatever static label it is handed.
         commands.observe("other", 200_000); // beyond the last finite bucket
 
         let mut out = String::new();
         render_command_histogram(&mut out, &commands);
 
         // Cumulative: the <=0.001 bucket for JOIN counts both JOIN samples.
-        assert!(out
-            .contains("ferrixd_command_duration_seconds_bucket{command=\"JOIN\",le=\"0.001\"} 2"));
+        assert!(
+            out.contains(
+                "ferrixd_command_duration_seconds_bucket{command=\"JOIN\",le=\"0.001\"} 2"
+            )
+        );
         // The smallest bucket only counts the 30us sample.
-        assert!(out
-            .contains("ferrixd_command_duration_seconds_bucket{command=\"JOIN\",le=\"5e-05\"} 1"));
+        assert!(
+            out.contains(
+                "ferrixd_command_duration_seconds_bucket{command=\"JOIN\",le=\"5e-05\"} 1"
+            )
+        );
         assert!(out.contains("ferrixd_command_duration_seconds_count{command=\"JOIN\"} 2"));
         // The over-range sample lands only in +Inf, not any finite bucket.
         assert!(
             out.contains("ferrixd_command_duration_seconds_bucket{command=\"other\",le=\"0.1\"} 0")
         );
-        assert!(out
-            .contains("ferrixd_command_duration_seconds_bucket{command=\"other\",le=\"+Inf\"} 1"));
+        assert!(
+            out.contains(
+                "ferrixd_command_duration_seconds_bucket{command=\"other\",le=\"+Inf\"} 1"
+            )
+        );
         assert!(out.contains("# TYPE ferrixd_command_duration_seconds histogram"));
     }
 }
