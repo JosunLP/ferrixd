@@ -17,8 +17,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use ferrix_protocol::{Command, Message};
 
@@ -30,7 +30,7 @@ use crate::numeric::*;
 use crate::sasl::{self, ChunkResult, Mechanism, ScramPhase};
 use crate::scram;
 use crate::session::{MultilineBatch, Session};
-use crate::state::{self, now_unix, ChannelEntry, ClientEntry, Member, MemberPrefix, Topic};
+use crate::state::{self, ChannelEntry, ClientEntry, Member, MemberPrefix, Topic, now_unix};
 use crate::wire::Line;
 
 /// Uppercase a short ASCII command verb into a stack buffer, avoiding a heap
@@ -711,12 +711,12 @@ fn render_stored(message: &StoredMessage, caps: CapSet, batch_ref: Option<&str>)
         out.push_str("msgid=");
         out.push_str(&message.msgid);
     }
-    if let Some(account) = &message.account {
-        if caps.has(Cap::AccountTag) {
-            sep(&mut out, &mut wrote);
-            out.push_str("account=");
-            out.push_str(account);
-        }
+    if let Some(account) = &message.account
+        && caps.has(Cap::AccountTag)
+    {
+        sep(&mut out, &mut wrote);
+        out.push_str("account=");
+        out.push_str(account);
     }
     if wrote {
         out.push(' ');
@@ -846,7 +846,7 @@ fn apply_metadata(map: &mut HashMap<String, String>, key: &str, value: Option<&s
 
 /// Normalise a ban/K-Line mask to full `nick!user@host` glob form. Extended
 /// bans (`~a:…`) and IP masks are left untouched.
-fn normalize_ban_mask(mask: &str) -> String {
+pub(crate) fn normalize_ban_mask(mask: &str) -> String {
     if mask.starts_with('~') {
         return mask.to_owned();
     }
@@ -1167,10 +1167,10 @@ impl Session {
             if let Some(channel) = self.server.find_channel(&self.server.fold(target)) {
                 deliver::to_channel_capped(&channel, &event, Cap::Multiline, Some(self.entry.id));
             }
-        } else if let Some(dest) = self.server.find_client(&self.server.fold(target)) {
-            if dest.caps().has(Cap::Multiline) {
-                deliver::to_client(&dest, &event);
-            }
+        } else if let Some(dest) = self.server.find_client(&self.server.fold(target))
+            && dest.caps().has(Cap::Multiline)
+        {
+            deliver::to_client(&dest, &event);
         }
         // The sender sees its own batch frames only with echo-message.
         let caps = self.entry.caps();
@@ -1181,11 +1181,11 @@ impl Session {
 
     fn cmd_register(&mut self, params: &[&str]) {
         // A channel name as the first argument registers a channel instead.
-        if let Some(&first) = params.first() {
-            if casemap::is_valid_channel(first) {
-                self.register_channel_cmd(first);
-                return;
-            }
+        if let Some(&first) = params.first()
+            && casemap::is_valid_channel(first)
+        {
+            self.register_channel_cmd(first);
+            return;
         }
 
         // REGISTER <account|*> <email> <password>
@@ -1318,18 +1318,19 @@ impl Session {
         // Let WASM plugins veto a registered client's nick change (fail-open;
         // pre-registration nick selection during the handshake is not a
         // moderation event and is left untouched).
-        if self.registered && nick != current {
-            if let Some(plugin_host) = self.server.plugins() {
-                let outcome = plugin_host.on_nick(&current, nick);
-                self.server.apply_plugin_actions(outcome.actions);
-                if outcome.verdict == crate::plugin::Verdict::Block {
-                    let reason = outcome
-                        .reason
-                        .as_deref()
-                        .unwrap_or("Nickname change refused by server policy");
-                    self.numeric(ERR_ERRONEUSNICKNAME, &[nick], Some(reason));
-                    return;
-                }
+        if self.registered
+            && nick != current
+            && let Some(plugin_host) = self.server.plugins()
+        {
+            let outcome = plugin_host.on_nick(&current, nick);
+            self.server.apply_plugin_actions(outcome.actions);
+            if outcome.verdict == crate::plugin::Verdict::Block {
+                let reason = outcome
+                    .reason
+                    .as_deref()
+                    .unwrap_or("Nickname change refused by server policy");
+                self.numeric(ERR_ERRONEUSNICKNAME, &[nick], Some(reason));
+                return;
             }
         }
 
@@ -2073,10 +2074,8 @@ impl Session {
                         }
                         self.deliver_self(&event);
                     }
-                    if !is_notice {
-                        if let Some(away) = &remote.away {
-                            self.numeric(RPL_AWAY, &[&remote.nick], Some(away));
-                        }
+                    if !is_notice && let Some(away) = &remote.away {
+                        self.numeric(RPL_AWAY, &[&remote.nick], Some(away));
                     }
                 } else if !is_notice {
                     self.numeric(ERR_NOSUCHNICK, &[target], Some("No such nick/channel"));
@@ -2122,10 +2121,8 @@ impl Session {
             if echo {
                 self.deliver_self(&event);
             }
-            if !is_notice {
-                if let Some(away) = dest.data.lock().away.clone() {
-                    self.numeric(RPL_AWAY, &[&dest_nick], Some(&away));
-                }
+            if !is_notice && let Some(away) = dest.data.lock().away.clone() {
+                self.numeric(RPL_AWAY, &[&dest_nick], Some(&away));
             }
         }
     }
@@ -2166,6 +2163,10 @@ impl Session {
         // Sync the away state to linked peers (remote WHOIS / away-notify).
         self.server
             .propagate_away(self.entry.id, away_msg.as_deref());
+        if let Some(plugins) = self.server.plugins() {
+            let outcome = plugins.on_away(&nick, away_msg.as_deref());
+            self.server.apply_plugin_actions(outcome.actions);
+        }
     }
 
     // -------------------------------------------------------------- queries ---
@@ -2365,20 +2366,20 @@ impl Session {
 
         if casemap::is_valid_channel(target) {
             let folded = self.server.fold(target);
-            if let Some(channel) = self.server.find_channel(&folded) {
-                if self.may_list_channel(&channel) {
-                    let display = channel.data.lock().name.clone();
-                    for (entry, prefix) in channel.member_snapshot() {
-                        reply(self, &display, &self.who_row_local(&entry, prefix));
-                    }
-                    // Members on linked servers are part of the channel too.
-                    for member in channel.remote_member_snapshot() {
-                        if let Some(user) = self
-                            .server
-                            .find_remote_user(&self.server.fold(&member.nick))
-                        {
-                            reply(self, &display, &Self::who_row_remote(&user, member.prefix));
-                        }
+            if let Some(channel) = self.server.find_channel(&folded)
+                && self.may_list_channel(&channel)
+            {
+                let display = channel.data.lock().name.clone();
+                for (entry, prefix) in channel.member_snapshot() {
+                    reply(self, &display, &self.who_row_local(&entry, prefix));
+                }
+                // Members on linked servers are part of the channel too.
+                for member in channel.remote_member_snapshot() {
+                    if let Some(user) = self
+                        .server
+                        .find_remote_user(&self.server.fold(&member.nick))
+                    {
+                        reply(self, &display, &Self::who_row_remote(&user, member.prefix));
                     }
                 }
             }
@@ -3342,10 +3343,10 @@ impl Session {
             // whole lifetime). When full, drop an arbitrary older pending invite.
             const MAX_PENDING_INVITES: usize = 256;
             let mut data = channel.data.lock();
-            if data.invited.len() >= MAX_PENDING_INVITES {
-                if let Some(victim) = data.invited.iter().next().cloned() {
-                    data.invited.remove(&victim);
-                }
+            if data.invited.len() >= MAX_PENDING_INVITES
+                && let Some(victim) = data.invited.iter().next().cloned()
+            {
+                data.invited.remove(&victim);
             }
             data.invited.insert(self.server.fold(&target_nick_display));
         }
@@ -5021,10 +5022,11 @@ impl Session {
                 line = line.trailing(reason);
             }
             let event = self.event(line.body());
-            if let Some(dest) = self.server.find_client(&folded_target) {
-                if dest.id != self.entry.id && dest.caps().has(Cap::MessageRedaction) {
-                    deliver::to_client(&dest, &event);
-                }
+            if let Some(dest) = self.server.find_client(&folded_target)
+                && dest.id != self.entry.id
+                && dest.caps().has(Cap::MessageRedaction)
+            {
+                deliver::to_client(&dest, &event);
             }
             if self.entry.caps().has(Cap::MessageRedaction) {
                 self.deliver_self(&event);
@@ -5281,6 +5283,10 @@ impl Session {
         self.propagate_monitored(&event, Cap::AccountNotify, false);
         // Sync the login state to linked peers (remote account-tag/WHOIS).
         self.server.propagate_account(self.entry.id, account);
+        if let Some(plugins) = self.server.plugins() {
+            let outcome = plugins.on_account(&nick, account);
+            self.server.apply_plugin_actions(outcome.actions);
+        }
     }
 
     /// Deliver `event` to every distinct co-member across the client's channels

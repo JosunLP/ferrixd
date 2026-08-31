@@ -43,6 +43,27 @@ handler took, carrying a `command` label. Buckets (seconds): `5e-05`, `0.0001`,
 **bounded**: unknown or unhandled verbs collapse to `command="other"`, so a
 client sending arbitrary command names cannot inflate the series set.
 
+## Plugin counters
+
+Emitted only when the [WASM plugin host](/guide/plugins) has plugins loaded,
+one series per plugin (`plugin` label, the file stem):
+
+| Metric | Help |
+| --- | --- |
+| `ferrixd_plugin_calls_total` | Plugin hook invocations |
+| `ferrixd_plugin_blocks_total` | Events blocked by a plugin |
+| `ferrixd_plugin_traps_total` | Plugin traps and fuel exhaustions |
+
+`ferrixd_plugin_traps_total` is the one to alert on: the host fails **open**,
+so a trapping plugin quietly stops enforcing whatever policy it was loaded for
+while everything else keeps working.
+
+```promql
+increase(ferrixd_plugin_traps_total[15m]) > 0
+```
+
+Label cardinality is bounded by the number of `.wasm` files in `[plugins].dir`.
+
 ## Endpoint behavior
 
 - Plain HTTP/1.1, hand-rolled responder — every request path returns the

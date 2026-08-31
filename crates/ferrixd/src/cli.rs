@@ -17,8 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use argon2::password_hash::{PasswordHasher, SaltString};
-use argon2::Argon2;
+use argon2::{Argon2, PasswordHasher};
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tokio::net::TcpListener;
@@ -360,6 +359,7 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
         host.set_max_memory(plugins_cfg.max_memory);
         host.set_expose_private_messages(plugins_cfg.expose_private_messages);
         host.set_grants(&plugins_cfg.grants);
+        host.set_plugin_config(&plugins_cfg.config);
         if let Some(state_dir) = &plugins_cfg.state_dir {
             if let Err(err) = std::fs::create_dir_all(state_dir) {
                 error!(dir = %state_dir.display(), %err, "failed to create plugin state dir");
@@ -374,7 +374,31 @@ async fn serve(config: Config, config_path: PathBuf) -> Result<()> {
         // Read-only world view for the query host functions (Weak: the host
         // lives inside the server, so a strong ref would be a cycle).
         host.set_world(Arc::downgrade(&server) as std::sync::Weak<dyn crate::plugin::WorldView>);
+        let ticking = plugins_cfg.tick_secs > 0 && host.wants_timer();
         server.attach_plugins(host);
+        // Periodic tick: lets plugins expire cooldowns, flush counters, or post
+        // scheduled announcements without an event to ride on. Only spawned
+        // when the operator asked for it and a plugin actually exports the hook.
+        if ticking {
+            let interval = Duration::from_secs(plugins_cfg.tick_secs);
+            let ticker_server = server.clone();
+            tokio::spawn(async move {
+                let mut ticks: u64 = 0;
+                let mut timer = tokio::time::interval(interval);
+                timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                timer.tick().await; // the first tick completes immediately
+                loop {
+                    timer.tick().await;
+                    ticks += 1;
+                    let Some(plugins) = ticker_server.plugins() else {
+                        continue;
+                    };
+                    let outcome = plugins.on_timer(ticks);
+                    ticker_server.apply_plugin_actions(outcome.actions);
+                }
+            });
+            info!(secs = plugins_cfg.tick_secs, "plugin timer hook enabled");
+        }
     }
 
     let params = ConnContext {
@@ -730,9 +754,8 @@ fn read_password(confirm: bool) -> Result<String> {
 fn hash_argon2(password: &str) -> Result<String> {
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|e| anyhow::anyhow!("gathering entropy: {e}"))?;
-    let salt = SaltString::encode_b64(&salt).map_err(|e| anyhow::anyhow!("encoding salt: {e}"))?;
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password_with_salt(password.as_bytes(), &salt)
         .map(|h| h.to_string())
         .map_err(|e| anyhow::anyhow!("hashing password: {e}"))
 }
@@ -997,21 +1020,67 @@ mod tests {
     }
 
     #[test]
+    fn plugin_grants_and_settings_parse() {
+        let config = Config::from_toml(
+            r##"
+            [server]
+            name = "t.example"
+            network = "n"
+            tls_bind = "127.0.0.1:6697"
+            plain_bind = "127.0.0.1:6667"
+
+            [tls]
+            self_signed_dev = true
+            dev_hostnames = ["localhost"]
+
+            [plugins]
+            dir = "/etc/ferrixd/plugins"
+            tick_secs = 30
+
+            [plugins.grants]
+            modbot = ["send_notice", "kick", "mode"]
+
+            [plugins.config.modbot]
+            report_channel = "#ops"
+            "##,
+        )
+        .expect("plugin block must parse");
+        let plugins = config.plugins.expect("plugins section present");
+        assert_eq!(plugins.tick_secs, 30);
+        assert_eq!(
+            plugins.grants.get("modbot").map(Vec::as_slice),
+            Some(
+                [
+                    "send_notice".to_owned(),
+                    "kick".to_owned(),
+                    "mode".to_owned()
+                ]
+                .as_slice()
+            )
+        );
+        assert_eq!(plugins.config["modbot"]["report_channel"].as_str(), "#ops");
+    }
+
+    #[test]
     fn embedded_example_config_is_valid() {
         Config::from_toml(EXAMPLE_CONFIG).expect("shipped example config must be valid");
     }
 
     #[test]
     fn hashing_produces_verifiable_argon2() {
-        use argon2::password_hash::{PasswordHash, PasswordVerifier};
+        use argon2::{PasswordHash, PasswordVerifier};
         let hash = hash_argon2("hunter2").expect("hashing should succeed");
         let parsed = PasswordHash::new(&hash).expect("valid PHC string");
-        assert!(Argon2::default()
-            .verify_password(b"hunter2", &parsed)
-            .is_ok());
-        assert!(Argon2::default()
-            .verify_password(b"wrong", &parsed)
-            .is_err());
+        assert!(
+            Argon2::default()
+                .verify_password(b"hunter2", &parsed)
+                .is_ok()
+        );
+        assert!(
+            Argon2::default()
+                .verify_password(b"wrong", &parsed)
+                .is_err()
+        );
     }
 
     #[test]

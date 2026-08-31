@@ -15,6 +15,9 @@ complete Rust example: [WASM Plugins guide](/guide/plugins).
   (default **5,000,000**). Exhaustion traps the call.
 - Memory: a plugin's linear memory may grow up to `[plugins].max_memory`
   bytes (default **16 MiB**); a `memory.grow` beyond the cap fails.
+- Timer: with `[plugins].tick_secs > 0` the host calls `ferrix_on_timer`
+  on every loaded plugin that exports it, on the same fuel budget as any
+  other hook.
 - Error policy: **fail-open** — a trap, missing export at call time, or
   out-of-fuel condition allows the event and logs the failure. A trapped
   call's queued output (replacement text, reason, actions) is discarded:
@@ -66,7 +69,10 @@ value is ignored).
 | --- | --- | --- |
 | `ferrix_on_connect` | `{"nick","user","host","account"}` (`account` may be `null`) | a client completed registration |
 | `ferrix_on_quit` | `{"nick","reason"}` | a registered client disconnects (QUIT, drop, KILL) |
-| `ferrix_on_load` | `{"api":2,"plugin":"<name>","granted":["…"]}` | once at load time, reporting the granted capabilities |
+| `ferrix_on_away` | `{"nick","message"}` (`message` is `null` when the user came back) | a registered client set or cleared its away state |
+| `ferrix_on_account` | `{"nick","account"}` (`account` may be `null`) | a client logged in to or out of an account |
+| `ferrix_on_timer` | `{"tick":<n>,"now_ms":<n>}` | every `[plugins].tick_secs` seconds (see below) |
+| `ferrix_on_load` | `{"api":3,"plugin":"<name>","granted":["…"]}` | once at load time, reporting the granted capabilities |
 
 Rules:
 
@@ -86,6 +92,10 @@ Rules:
   (later plugins don't see the event).
 - A blocked message is not delivered, not echoed, and not recorded in
   history.
+- `ferrix_on_timer` only runs when the operator set `[plugins].tick_secs`
+  to a non-zero value **and** at least one plugin exports the hook; there
+  is no event context, so `set_text` does nothing and only actions apply.
+  Ticks are skipped rather than queued if the host falls behind.
 
 ## Host imports
 
@@ -104,17 +114,50 @@ everything else is compute under the fuel budget.
 | `now_ms` | `() -> i64` | wall-clock milliseconds since the Unix epoch (for cooldowns; not monotonic across clock adjustments) |
 | `channel_members` | `(cptr, clen, outptr, outcap) -> i32` | JSON array of the channel's member nicks (local + remote, first 512). Returns the needed length, written when it fits; `-1` for an unknown channel |
 | `user_info` | `(nptr, nlen, outptr, outcap) -> i32` | JSON `{"nick","user","host","account","away","oper","bot"}` for a locally connected user. Same length contract; `-1` for an unknown nick |
+| `user_channels` | `(nptr, nlen, outptr, outcap) -> i32` | JSON array of the channels a locally connected user is in (first 512). Same length contract; `-1` for an unknown nick |
+| `channel_info` | `(cptr, clen, outptr, outcap) -> i32` | JSON `{"name","topic","topic_set_by","topic_set_at","modes","members","remote_members","bans","created_at","registered"}`. The `+k` key is never reported. `-1` for an unknown channel |
+| `server_info` | `(outptr, outcap) -> i32` | JSON `{"name","sid","network","version","users","remote_users","channels","opers","servers","uptime_secs"}` |
+| `config_get` | `(kptr, klen, outptr, outcap) -> i32` | read one operator-supplied setting from `[plugins.config.<plugin>]`. Same length contract; `-1` when the key is unset (so "" and "not configured" stay distinguishable) |
+| `random_bytes` | `(outptr, len) -> i32` | fill up to **256** bytes from the OS CSPRNG; returns the count written, `-1` on failure. A sandbox has no entropy of its own — do not roll nonces from `now_ms` |
+| `log_at` | `(level, ptr, len)` | like `log`, choosing the severity: `0` debug, `1` info, `2` warn, `3` error (anything else: info) |
 
 ### Capability-gated (see `[plugins].grants`)
 
+Every action below returns `0` when it was queued and `1` when it was
+refused — no grant, an invalid target, or the budget exhausted. All of them
+execute host-side *after* the hook call returns, sourced from the server
+itself.
+
 | Import | Capability | Signature | Behavior |
 | --- | --- | --- | --- |
-| `send_notice` | `send_notice` | `(tptr, tlen, ptr, len) -> i32` | queue a server NOTICE to a nick or channel, delivered after the hook returns. `0` = queued, `1` = refused (no grant, invalid target, or budget exhausted) |
+| `send_notice` | `send_notice` | `(tptr, tlen, ptr, len) -> i32` | queue a server NOTICE to a nick or channel |
+| `send_message` | `send_message` | `(tptr, tlen, ptr, len) -> i32` | queue a server PRIVMSG to a nick or channel |
+| `kick` | `kick` | `(cptr, clen, nptr, nlen, rptr, rlen) -> i32` | remove a nick from a channel; an empty reason becomes `Kicked by <plugin>` |
+| `set_mode` | `mode` | `(cptr, clen, mptr, mlen) -> i32` | apply a channel mode change, e.g. `"+b nick!*@*"` or `"+m"` |
+| `set_topic` | `topic` | `(cptr, clen, tptr, tlen) -> i32` | set a channel topic; empty text clears it |
+| `kline` | `kline` | `(mptr, mlen, rptr, rlen) -> i32` | K-Line a `nick!user@host` glob and disconnect whoever it matches |
 
 Action budget: at most **4** actions per hook call and **120** per rolling
-minute per plugin. Queued actions execute host-side after the hook call
-returns; server-originated notices do **not** re-enter the plugin hooks,
-so a plugin cannot feed itself an event loop.
+minute per plugin. Server-originated output does **not** re-enter the
+plugin hooks, so a plugin cannot feed itself an event loop.
+
+Bounds and shapes:
+
+- Targets are at most 64 bytes and may not contain whitespace, `,`, `*`,
+  `?`, `!` or control characters. `kick`, `set_mode` and `set_topic`
+  require a channel (`#…`).
+- A mode string is one `[+-]` flag word plus at most **8** simple
+  arguments (`"+bo mask nick"`). `o`/`v` arguments are nicks; the host
+  translates them to network UIDs. A nick that resolves to nobody cancels
+  the **whole** change rather than applying half of it.
+- A K-Line mask is at most 128 bytes, carries no whitespace and no leading
+  `:` (extended `~a:account` masks are fine). It is recorded as set by
+  `plugin:<name>`, applies to this node like the `KLINE` command, and — as
+  with `KLINE` — is not propagated across the network.
+- Channel-directed notices and messages are relayed to the peers holding
+  members, so plugin output reaches the whole channel, not just this node.
+- Actions the plugin queued during a call that later traps are discarded
+  along with the rest of its output.
 
 ### Key-value store bounds
 
@@ -128,6 +171,24 @@ so a plugin cannot feed itself an event loop.
 The store is per-plugin and in-memory; with `[plugins].state_dir` set, the
 host persists it to `<state_dir>/<plugin>.kv` (flushed at most every 2
 seconds, off the wasm execution path). Plugins never see the file.
+
+### Operator settings
+
+`ferrix.config_get` reads `[plugins.config.<plugin>]` — a plain string
+table the operator fills in, so one `.wasm` file can be deployed with
+site-specific parameters instead of recompiled per network:
+
+```toml
+[plugins.config.greeter]
+channel = "#lobby"
+message = "Welcome!"
+
+[plugins.grants]
+greeter = ["send_notice"]
+```
+
+The table is read once at load time. It is configuration, not state: a
+plugin cannot write to it (that is what the key-value store is for).
 
 ## Call sequence
 
@@ -152,5 +213,9 @@ Payloads are never null-terminated; always use the `len` you're given.
 - Message-event schema changes arrive as a new suffix (`_v3`, …) rather
   than mutating `_v2`'s JSON.
 - Unknown JSON fields may appear in payloads at any time; parse leniently.
+- New capabilities arrive as new names in `[plugins.grants]`; an
+  unrecognised name is logged and ignored, never granted.
 - The `api` field in the `ferrix_on_load` payload identifies the ABI
-  level (currently `2`).
+  level (currently `3`). Every ABI 1 and 2 plugin loads and runs unchanged:
+  the v3 hooks are optional exports and the v3 host functions optional
+  imports.

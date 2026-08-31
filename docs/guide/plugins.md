@@ -2,9 +2,10 @@
 
 ferrixd can load **WebAssembly plugins** that hook into server events:
 they can veto or **rewrite** messages, veto joins, nick changes, topics,
-parts, kicks, mode changes, and invites, observe connects and quits, keep
-bounded persistent state, query a read-only view of the server, and — when
-the operator grants it — send server notices. Plugins run inside a
+parts, kicks, mode changes, and invites, observe connects, quits, away and
+account changes, run on a timer, keep bounded persistent state, query a
+read-only view of the server, and — when the operator grants it — act:
+notices, messages, kicks, modes, topics, K-Lines. Plugins run inside a
 pure-Rust WASM interpreter ([`wasmi`](https://docs.rs/wasmi)) under a
 strict sandbox:
 
@@ -21,11 +22,12 @@ strict sandbox:
   malformed, the event is **allowed** and the trapped call's queued output
   is discarded — a broken plugin degrades to a no-op, never to a denial
   of service against your own users.
-- **Deny-by-default capabilities.** Active abilities (like sending
-  notices) work only when *you* grant them per plugin in the config; a
-  plugin cannot grant itself anything. Plugin-produced text is sanitized
-  (no CR/LF injection), budgeted, and rate-limited, and server-originated
-  notices never re-enter the plugin hooks.
+- **Deny-by-default capabilities.** Active abilities (sending notices or
+  messages, kicking, setting modes and topics, K-Lining) work only when
+  *you* grant them per plugin in the config; a plugin cannot grant itself
+  anything. Plugin-produced text is sanitized (no CR/LF injection),
+  budgeted, and rate-limited, and server-originated output never re-enters
+  the plugin hooks.
 
 ## Enabling the plugin host
 
@@ -36,10 +38,21 @@ fuel = 5000000                   # per-call instruction budget (optional)
 max_memory = 16777216            # per-instance linear-memory cap in bytes (optional)
 state_dir = "/var/lib/ferrixd/plugin-state"  # optional: persist plugin KV stores
 expose_private_messages = false  # optional: feed DMs to plugins (privacy: your call)
+tick_secs = 0                    # optional: >0 calls ferrix_on_timer that often
 
 [plugins.grants]                 # optional: per-plugin capabilities
-"20-modbot" = ["send_notice"]
+"20-modbot" = ["send_notice", "kick", "mode"]
+
+[plugins.config."20-modbot"]     # optional: settings the plugin reads back
+report_channel = "#ops"
+threshold = "5"
 ```
+
+The grant names are `send_notice`, `send_message`, `kick`, `mode`, `topic`
+and `kline`. Grant the narrowest set that does the job: `kline` bans a
+hostmask and disconnects everyone it matches, which is the one grant that
+can lock users out of the server. An unrecognised name is logged and
+ignored — it never becomes a grant.
 
 Files load in sorted filename order (which is also hook call order — handy
 for prioritization: `10-antispam.wasm`, `20-links.wasm`). A file that fails
@@ -60,12 +73,17 @@ to load is logged and skipped; the server still starts.
 | `ferrix_on_invite` | a local `INVITE` (after the checks) | invite cancelled |
 | `ferrix_on_connect` | a client completes registration | *(observe-only)* |
 | `ferrix_on_quit` | a registered client disconnects | *(observe-only)* |
+| `ferrix_on_away` | a client goes away or comes back | *(observe-only)* |
+| `ferrix_on_account` | a client logs in to or out of an account | *(observe-only)* |
+| `ferrix_on_timer` | every `tick_secs` seconds, if you set it | *(observe-only)* |
 | `ferrix_on_load` | once at load, with your granted capabilities | *(observe-only)* |
 
 The `message` and `join` hooks run for **local and federated traffic alike**, so policy is uniform
 for everything this node delivers. The moderation hooks (`nick`, `topic`, `part`, `kick`, `mode`,
 `invite`) run for local session commands, always *after* the channel's own permission checks —
-plugin policy narrows authority, never widens it.
+plugin policy narrows authority, never widens it. `ferrix_on_timer` is the one hook with no
+event behind it: it fires on the interval you configure (and only if some plugin exports it),
+which is where cooldown expiry, counter rollover and scheduled announcements belong.
 A blocked message is not delivered and
 not recorded in history; the sender gets `FAIL PRIVMSG MSG_BLOCKED …`
 (standard-replies, with NOTICE fallback), with your custom reason if the
@@ -84,12 +102,34 @@ Plugins also get, without any grant:
   (bounded: 256 keys / 64 KiB; persisted under `state_dir` if configured).
   Karma counters, flood trackers, warn lists.
 - `ferrix.now_ms` — wall-clock time for cooldowns and rate limiting.
-- `ferrix.channel_members` / `ferrix.user_info` — read-only queries
-  against the live server state.
+- `ferrix.random_bytes` — entropy from the OS CSPRNG. A sandbox has none of
+  its own, and nonces rolled from the clock are guessable.
+- `ferrix.channel_members`, `ferrix.user_info`, `ferrix.user_channels`,
+  `ferrix.channel_info`, `ferrix.server_info` — read-only queries against
+  the live server state.
+- `ferrix.config_get` — the operator's `[plugins.config.<name>]` settings,
+  so one `.wasm` file ships to every network and is *configured*, not
+  recompiled, per site.
+- `ferrix.log` / `ferrix.log_at` — into the server log, at a level you pick.
 
-And with a `send_notice` grant, `ferrix.send_notice` queues a server
-NOTICE to a nick or channel (max 4 per hook call, 120/minute) — enough to
-build moderation bots that warn, announce, and explain their decisions.
+Granted plugins can also **act**. Every action is queued during the hook
+call and executed by the server afterwards, sourced from the server itself
+(max 4 per hook call, 120/minute per plugin):
+
+| Host function | Grant | Does |
+| --- | --- | --- |
+| `ferrix.send_notice` | `send_notice` | server NOTICE to a nick or channel |
+| `ferrix.send_message` | `send_message` | server PRIVMSG to a nick or channel |
+| `ferrix.kick` | `kick` | remove a user from a channel |
+| `ferrix.set_mode` | `mode` | apply channel modes, e.g. `+b` or `+m` |
+| `ferrix.set_topic` | `topic` | set or clear a channel topic |
+| `ferrix.kline` | `kline` | ban a hostmask and disconnect who it matches |
+
+That is enough for a moderation bot that warns, mutes the channel, bans the
+mask, kicks the offender, and reports what it did — with the operator
+deciding, grant by grant, how far it may go. Channel-directed notices and
+messages are relayed to linked servers, so the whole channel sees them;
+K-Lines, like the `KLINE` command, apply to the node that ran them.
 
 ## Writing a plugin in Rust
 

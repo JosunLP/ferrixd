@@ -20,10 +20,10 @@ use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use parking_lot::{Mutex, RwLock};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 
 use crate::account::AccountStore;
 use crate::cap::CapSet;
@@ -646,43 +646,234 @@ impl Server {
     /// the sandboxed call returned; server-originated output does not re-enter
     /// the plugin hooks, so plugins cannot feed themselves an event loop.
     pub fn apply_plugin_actions(&self, actions: Vec<crate::plugin::Action>) {
+        use crate::plugin::Action;
         for action in actions {
             match action {
-                crate::plugin::Action::Notice { target, text } => {
-                    self.plugin_notice(&target, &text);
-                }
+                Action::Notice { target, text } => self.plugin_say(&target, &text, true),
+                Action::Message { target, text } => self.plugin_say(&target, &text, false),
+                Action::Kick {
+                    channel,
+                    nick,
+                    reason,
+                } => self.plugin_kick(&channel, &nick, &reason),
+                Action::Mode {
+                    channel,
+                    flags,
+                    args,
+                } => self.plugin_mode(&channel, &flags, &args),
+                Action::Topic { channel, text } => self.plugin_topic(&channel, &text),
+                Action::Kline {
+                    mask,
+                    reason,
+                    set_by,
+                } => self.plugin_kline(&mask, &reason, &set_by),
             }
         }
     }
 
-    /// Deliver a plugin-queued server NOTICE to a channel or a local nick.
-    /// Unknown targets are dropped (the plugin already got its return code;
-    /// the world may simply have moved on since).
-    fn plugin_notice(&self, target: &str, text: &str) {
+    /// Deliver a plugin-queued server NOTICE or PRIVMSG to a channel or a
+    /// local nick. Unknown targets are dropped (the plugin already got its
+    /// return code; the world may simply have moved on since).
+    ///
+    /// Channel output is relayed to the peers that hold members, so a
+    /// plugin's moderation notice reaches the whole channel and not just the
+    /// members that happen to sit on this node.
+    fn plugin_say(&self, target: &str, text: &str, notice: bool) {
+        let command = if notice { "NOTICE" } else { "PRIVMSG" };
         let folded = self.fold(target);
-        if target.starts_with('#') {
+        if crate::casemap::is_valid_channel(target) {
             let Some(channel) = self.find_channel(&folded) else {
                 return;
             };
             let display = channel.data.lock().name.clone();
+            let now_ms = now_millis();
+            let msgid = self.history.next_msgid();
             let body = Line::server(&self.info.name)
-                .command("NOTICE")
+                .command(command)
                 .param(&display)
                 .trailing(text)
                 .body();
-            let event =
-                crate::deliver::Event::new(body).with_time(format_server_time(now_millis()));
+            let event = crate::deliver::Event::new(body)
+                .with_time(format_server_time(now_ms))
+                .with_msgid(msgid.clone());
             crate::deliver::to_channel(&channel, &event, None);
+            self.history.record(
+                &folded,
+                Arc::new(crate::history::StoredMessage {
+                    msgid: msgid.clone(),
+                    time_ms: now_ms,
+                    source: self.info.name.clone(),
+                    account: None,
+                    kind: if notice {
+                        crate::history::MessageKind::Notice
+                    } else {
+                        crate::history::MessageKind::PrivMsg
+                    },
+                    target: display.clone(),
+                    text: text.to_owned(),
+                }),
+            );
+            self.relay_channel_message(
+                &self.info.name,
+                &display,
+                notice,
+                Some(msgid),
+                Some(now_ms),
+                None,
+                text,
+                None,
+            );
         } else if let Some(entry) = self.find_client(&folded) {
             let body = Line::server(&self.info.name)
-                .command("NOTICE")
+                .command(command)
                 .param(&entry.nick())
                 .trailing(text)
                 .body();
             let event =
                 crate::deliver::Event::new(body).with_time(format_server_time(now_millis()));
             crate::deliver::to_client(&entry, &event);
+        } else if let Some(user) = self.find_remote_user(&folded) {
+            // A user on a linked server: route the message towards them.
+            let msg = crate::s2s::LinkMessage::UserMessage {
+                source: self.info.name.clone(),
+                target: user.uid.clone(),
+                notice,
+                msgid: Some(self.history.next_msgid()),
+                time_ms: Some(now_millis()),
+                tags: None,
+                text: text.to_owned(),
+            };
+            self.send_towards(&user.server_sid, msg.to_line());
         }
+    }
+
+    /// Remove a user from a channel on a plugin's behalf, as the server, and
+    /// tell the peers. The target may be local or on a linked server.
+    fn plugin_kick(&self, channel: &str, nick: &str, reason: &str) {
+        let Some(entry) = self.find_channel(&self.fold(channel)) else {
+            return;
+        };
+        let display = entry.data.lock().name.clone();
+        let folded_nick = self.fold(nick);
+        let uid = if let Some(client) = self.find_client(&folded_nick) {
+            self.local_uid(client.id)
+        } else if let Some(user) = self.find_remote_user(&folded_nick) {
+            user.uid
+        } else {
+            return;
+        };
+        self.remote_kick(&display, "*", &uid, reason);
+        if !self.links.is_empty() {
+            let msg = crate::s2s::LinkMessage::Skick {
+                channel: display,
+                source: "*".to_owned(),
+                target: uid,
+                reason: reason.to_owned(),
+            };
+            self.propagate_to_links(&msg.to_line());
+        }
+    }
+
+    /// Apply a channel mode change on a plugin's behalf, as the server. `o`/`v`
+    /// arguments arrive as nicks and are translated to network UIDs for the
+    /// wire; an unresolvable target cancels the whole change rather than
+    /// applying half of it.
+    fn plugin_mode(&self, channel: &str, flags: &str, args: &[String]) {
+        let Some(entry) = self.find_channel(&self.fold(channel)) else {
+            return;
+        };
+        let display = entry.data.lock().name.clone();
+        let mut wire: Vec<String> = Vec::with_capacity(args.len());
+        let mut rest = args.iter();
+        let mut adding = true;
+        for c in flags.chars() {
+            match c {
+                '+' => adding = true,
+                '-' => adding = false,
+                'o' | 'v' => {
+                    let Some(nick) = rest.next() else { return };
+                    let folded = self.fold(nick);
+                    if let Some(client) = self.find_client(&folded) {
+                        wire.push(self.local_uid(client.id));
+                    } else if let Some(user) = self.find_remote_user(&folded) {
+                        wire.push(user.uid);
+                    } else {
+                        return;
+                    }
+                }
+                // `-k`/`-l` carry no argument, matching the client-side parser.
+                'k' | 'l' => {
+                    if adding {
+                        let Some(arg) = rest.next() else { return };
+                        wire.push(arg.clone());
+                    }
+                }
+                'b' | 'e' | 'I' => {
+                    let Some(arg) = rest.next() else { return };
+                    wire.push(crate::command::normalize_ban_mask(arg));
+                }
+                _ => {}
+            }
+        }
+        let Some((applied_flags, applied_args)) =
+            self.apply_mode_change(&display, "*", 0, flags, &wire)
+        else {
+            return;
+        };
+        self.record_channel_event(
+            &self.fold(&display),
+            &display,
+            &self.info.name,
+            crate::history::MessageKind::Mode,
+            mode_text(&applied_flags, &applied_args),
+        );
+        if !self.links.is_empty() {
+            let msg = crate::s2s::LinkMessage::Smode {
+                channel: display.clone(),
+                source: "*".to_owned(),
+                ts: self.channel_ts(&display),
+                flags: applied_flags,
+                args: wire,
+            };
+            self.propagate_to_links(&msg.to_line());
+        }
+    }
+
+    /// Set (or clear) a channel topic on a plugin's behalf, as the server.
+    fn plugin_topic(&self, channel: &str, text: &str) {
+        let Some(entry) = self.find_channel(&self.fold(channel)) else {
+            return;
+        };
+        let display = entry.data.lock().name.clone();
+        let set_at = now_unix();
+        self.remote_topic(&display, "*", &self.info.name, set_at, text);
+        self.record_channel_event(
+            &self.fold(&display),
+            &display,
+            &self.info.name,
+            crate::history::MessageKind::Topic,
+            text.to_owned(),
+        );
+        if !self.links.is_empty() {
+            let msg = crate::s2s::LinkMessage::Stopic {
+                channel: display,
+                source: "*".to_owned(),
+                set_by: self.info.name.clone(),
+                set_at,
+                text: text.to_owned(),
+            };
+            self.propagate_to_links(&msg.to_line());
+        }
+    }
+
+    /// Install a K-Line on a plugin's behalf and disconnect whoever it matches.
+    /// Local only, like the `KLINE` command it mirrors (`GLINE` is the
+    /// network-wide form, and is not a plugin capability).
+    fn plugin_kline(&self, mask: &str, reason: &str, set_by: &str) {
+        let mask = crate::command::normalize_ban_mask(mask);
+        self.add_kline(mask.clone(), reason.to_owned(), set_by.to_owned());
+        let affected = self.kill_matching(&mask, &format!("K-Lined: {reason}"));
+        tracing::info!(%mask, %set_by, affected, "plugin installed a K-Line");
     }
 
     /// Attach the hot-swappable TLS configuration (so `REHASH` can reload certs).
@@ -791,13 +982,13 @@ impl Server {
                 handle.name, handle.sid
             ));
         }
-        if let Some(existing) = self.server_name_owner(&handle.name) {
-            if existing != handle.sid {
-                return Err(format!(
-                    "Server {} already exists (SID {existing}) — link would create a loop",
-                    handle.name
-                ));
-            }
+        if let Some(existing) = self.server_name_owner(&handle.name)
+            && existing != handle.sid
+        {
+            return Err(format!(
+                "Server {} already exists (SID {existing}) — link would create a loop",
+                handle.name
+            ));
         }
         // Atomic claim: whichever path announces this SID first owns the route.
         match self.remote_routes.entry(handle.sid.clone()) {
@@ -849,13 +1040,13 @@ impl Server {
                 server.name, server.sid
             ));
         }
-        if let Some(existing) = self.server_name_owner(&server.name) {
-            if existing != server.sid {
-                return Err(format!(
-                    "Server {} already exists (SID {existing}) — cycle detected",
-                    server.name
-                ));
-            }
+        if let Some(existing) = self.server_name_owner(&server.name)
+            && existing != server.sid
+        {
+            return Err(format!(
+                "Server {} already exists (SID {existing}) — cycle detected",
+                server.name
+            ));
         }
         if !self.route_authorize(peer_sid, &server.sid) {
             let via = self
@@ -1000,6 +1191,16 @@ impl Server {
     #[must_use]
     pub fn remote_source_authorized(&self, peer_sid: &str, source: &str) -> bool {
         let nick = source.split('!').next().unwrap_or(source);
+        // A server may speak for itself: plugin-originated NOTICEs and PRIVMSGs
+        // carry the originating server's *name* rather than a user's nick. It is
+        // authorised exactly like one of that server's users would be — the
+        // route must lead back to the peer the frame arrived on.
+        if let Some(sid) = self.sid_of_server_name(nick) {
+            return self
+                .remote_routes
+                .get(&sid)
+                .is_some_and(|owner| owner.as_str() == peer_sid);
+        }
         let folded = self.fold(nick);
         match self.remote_users.get(&folded) {
             Some(user) => self
@@ -1008,6 +1209,22 @@ impl Server {
                 .is_some_and(|owner| owner.as_str() == peer_sid),
             None => false,
         }
+    }
+
+    /// The SID of a linked server known by `name` (case-insensitive), if any.
+    /// Direct peers and servers behind them are both resolvable.
+    fn sid_of_server_name(&self, name: &str) -> Option<String> {
+        if let Some(link) = self
+            .links
+            .iter()
+            .find(|link| link.name.eq_ignore_ascii_case(name))
+        {
+            return Some(link.sid.clone());
+        }
+        self.remote_servers
+            .iter()
+            .find(|server| server.name.eq_ignore_ascii_case(name))
+            .map(|server| server.sid.clone())
     }
 
     /// Whether any peer links are up.
@@ -2657,10 +2874,10 @@ impl Server {
 
     /// Drop a channel registration entirely.
     pub fn drop_channel_registration(&self, folded: &str) {
-        if self.registered_channels.remove(folded).is_some() {
-            if let Some(store) = self.chanreg.get() {
-                store.delete(folded);
-            }
+        if self.registered_channels.remove(folded).is_some()
+            && let Some(store) = self.chanreg.get()
+        {
+            store.delete(folded);
         }
     }
 
@@ -2964,10 +3181,10 @@ impl Server {
             let source_nick = mask.split('!').next().unwrap_or(&mask);
             let pair = crate::history::pair_key(&self.fold(source_nick), &self.fold(target));
             self.history.redact(&pair, msgid);
-            if let Some(dest) = self.find_client(&self.fold(target)) {
-                if dest.caps().has(crate::cap::Cap::MessageRedaction) {
-                    crate::deliver::to_client(&dest, &build(target));
-                }
+            if let Some(dest) = self.find_client(&self.fold(target))
+                && dest.caps().has(crate::cap::Cap::MessageRedaction)
+            {
+                crate::deliver::to_client(&dest, &build(target));
             }
         }
     }
@@ -3064,10 +3281,10 @@ impl Server {
             // limit under an invite flood.
             const MAX_PENDING_INVITES: usize = 256;
             let mut data = channel.data.lock();
-            if data.invited.len() >= MAX_PENDING_INVITES {
-                if let Some(victim) = data.invited.iter().next().cloned() {
-                    data.invited.remove(&victim);
-                }
+            if data.invited.len() >= MAX_PENDING_INVITES
+                && let Some(victim) = data.invited.iter().next().cloned()
+            {
+                data.invited.remove(&victim);
             }
             data.invited.insert(self.fold(&target_nick));
         }
@@ -3347,10 +3564,10 @@ impl Server {
         if source == "*" {
             return self.info.name.clone();
         }
-        if let Some(id) = self.local_id_of_uid(source) {
-            if let Some(entry) = self.by_id.get(&id) {
-                return entry.hostmask();
-            }
+        if let Some(id) = self.local_id_of_uid(source)
+            && let Some(entry) = self.by_id.get(&id)
+        {
+            return entry.hostmask();
         }
         match self.remote_user_by_uid(source) {
             Some(user) => user.hostmask(),
@@ -3410,27 +3627,29 @@ impl Server {
         self.persist_registered(&folded);
     }
 
-    /// Apply a channel mode change relayed over S2S and announce it to local
-    /// members. `o`/`v` arguments are network UIDs; they are resolved to local
-    /// or remote members here (and rendered as nicks for the announcement).
-    pub fn remote_mode(
+    /// Apply a channel mode change and announce it to local members. `o`/`v`
+    /// arguments are network UIDs; they are resolved to local or remote members
+    /// here (and rendered as nicks for the announcement).
+    ///
+    /// Returns the flags and rendered arguments that actually applied — the
+    /// caller decides whether that becomes a history event. `None` means
+    /// nothing changed (unknown channel, stale TS, or no applicable flag).
+    fn apply_mode_change(
         &self,
         channel_name: &str,
         source: &str,
         peer_ts: u64,
         flags: &str,
         args: &[String],
-    ) {
+    ) -> Option<(String, Vec<String>)> {
         let folded = self.fold(channel_name);
-        let Some(channel) = self.find_channel(&folded) else {
-            return;
-        };
+        let channel = self.find_channel(&folded)?;
         // TS resolution: modes from a *younger* view of the channel are stale —
         // that side lost the netjoin and its modes never applied. (An older
         // view wins and takes the channel's timestamp with it.)
         if peer_ts > 0 {
             if self.channel_ts_wins_over(&channel, peer_ts) {
-                return;
+                return None;
             }
             self.reconcile_channel_ts(&channel, peer_ts);
         }
@@ -3574,7 +3793,7 @@ impl Server {
             d.name.clone()
         };
         if accum.is_empty() {
-            return;
+            return None;
         }
         let mut line = Line::server(&self.remote_source_mask(source))
             .command("MODE")
@@ -3584,23 +3803,39 @@ impl Server {
             line = line.param(arg);
         }
         channel.broadcast(&line.build(), None);
-        // Mode bursts (`*` source) restate existing state; only user-driven
-        // changes become history events.
-        if source != "*" {
-            let mode_text = if applied_args.is_empty() {
-                accum.flags.clone()
-            } else {
-                format!("{} {}", accum.flags, applied_args.join(" "))
-            };
-            self.record_channel_event(
-                &folded,
-                &display,
-                &self.remote_source_mask(source),
-                crate::history::MessageKind::Mode,
-                mode_text,
-            );
-        }
         self.persist_registered(&folded);
+        Some((accum.flags, applied_args))
+    }
+
+    /// Apply a channel mode change relayed over S2S. Mode bursts (`*` source)
+    /// restate existing state; only user-driven changes become history events.
+    pub fn remote_mode(
+        &self,
+        channel_name: &str,
+        source: &str,
+        peer_ts: u64,
+        flags: &str,
+        args: &[String],
+    ) {
+        let Some((applied_flags, applied_args)) =
+            self.apply_mode_change(channel_name, source, peer_ts, flags, args)
+        else {
+            return;
+        };
+        if source == "*" {
+            return;
+        }
+        let folded = self.fold(channel_name);
+        let display = self
+            .find_channel(&folded)
+            .map_or_else(|| channel_name.to_owned(), |c| c.data.lock().name.clone());
+        self.record_channel_event(
+            &folded,
+            &display,
+            &self.remote_source_mask(source),
+            crate::history::MessageKind::Mode,
+            mode_text(&applied_flags, &applied_args),
+        );
     }
 
     /// Apply a kick relayed over S2S: remove the target (local or remote) from
@@ -3765,10 +4000,14 @@ impl Server {
             return;
         };
         let source_nick = source.split('!').next().unwrap_or(source);
+        // Server-originated output (another node's plugin) does not re-enter the
+        // hooks — the same rule that keeps a plugin from feeding itself locally,
+        // held across the link tree so two plugins cannot ping-pong.
+        let from_server = self.sid_of_server_name(source_nick).is_some();
         // Relayed messages pass the same plugin policy as local ones; a block
         // also stops the onward relay so the whole (sub)tree stays consistent,
         // and a rewrite travels onward so every server shows the same text.
-        let plugin_replacement = match self.plugins() {
+        let plugin_replacement = match self.plugins().filter(|_| !from_server) {
             Some(host) => {
                 let outcome = host.on_channel_message(source_nick, base_name, text);
                 self.apply_plugin_actions(outcome.actions);
@@ -4116,6 +4355,15 @@ impl ClientEntry {
 
 /// Read-only world view for plugin query host functions (`ferrix.channel_members`,
 /// `ferrix.user_info`). Strictly informational: nothing here can mutate state.
+/// Render a mode change for the channel history log (`+bo mask nick`).
+fn mode_text(flags: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        flags.to_owned()
+    } else {
+        format!("{} {}", flags, args.join(" "))
+    }
+}
+
 impl crate::plugin::WorldView for Server {
     fn channel_members(&self, channel: &str) -> Option<Vec<String>> {
         let channel = self.find_channel(&self.fold(channel))?;
@@ -4147,6 +4395,68 @@ impl crate::plugin::WorldView for Server {
         out.push_str(if d.bot { "true" } else { "false" });
         out.push('}');
         Some(out)
+    }
+
+    fn server_info_json(&self) -> String {
+        let mut out = String::from("{\"name\":");
+        crate::plugin::push_json_string(&mut out, &self.info.name);
+        out.push_str(",\"sid\":");
+        crate::plugin::push_json_string(&mut out, &self.info.sid);
+        out.push_str(",\"network\":");
+        crate::plugin::push_json_string(&mut out, &self.info.network);
+        out.push_str(",\"version\":");
+        crate::plugin::push_json_string(&mut out, &self.info.version);
+        out.push_str(&format!(
+            ",\"users\":{},\"remote_users\":{},\"channels\":{},\"opers\":{},\"servers\":{},\"uptime_secs\":{}}}",
+            self.client_count(),
+            self.remote_user_count(),
+            self.channel_count(),
+            self.oper_count(),
+            self.remote_server_count(),
+            self.uptime_secs(),
+        ));
+        out
+    }
+
+    fn channel_info_json(&self, channel: &str) -> Option<String> {
+        let folded = self.fold(channel);
+        let entry = self.find_channel(&folded)?;
+        let data = entry.data.lock();
+        // The key is deliberately hidden: `+k` is a secret, and a plugin that
+        // needs to change it can set one rather than read the current value.
+        let (flags, _args) = data.modes.render(false);
+        let mut out = String::from("{\"name\":");
+        crate::plugin::push_json_string(&mut out, &data.name);
+        out.push_str(",\"topic\":");
+        crate::plugin::push_json_optional(&mut out, data.topic.as_ref().map(|t| t.text.as_str()));
+        out.push_str(",\"topic_set_by\":");
+        crate::plugin::push_json_optional(&mut out, data.topic.as_ref().map(|t| t.set_by.as_str()));
+        out.push_str(",\"modes\":");
+        crate::plugin::push_json_string(&mut out, &flags);
+        out.push_str(&format!(
+            ",\"topic_set_at\":{},\"members\":{},\"remote_members\":{},\"bans\":{},\"created_at\":{},\"registered\":{}}}",
+            data.topic.as_ref().map_or(0, |t| t.set_at),
+            data.members.len(),
+            data.remote_members.len(),
+            data.bans.len(),
+            data.created_at,
+            self.is_channel_registered(&folded),
+        ));
+        Some(out)
+    }
+
+    fn user_channels(&self, nick: &str) -> Option<Vec<String>> {
+        let entry = self.find_client(&self.fold(nick))?;
+        let folded: Vec<String> = entry.data.lock().channels.iter().cloned().collect();
+        Some(
+            folded
+                .iter()
+                .map(|f| {
+                    self.find_channel(f)
+                        .map_or_else(|| f.clone(), |c| c.data.lock().name.clone())
+                })
+                .collect(),
+        )
     }
 }
 
@@ -4744,13 +5054,132 @@ mod tests {
         }
     }
 
+    /// A server holding `#general` with one remote member, ready for the
+    /// plugin-action tests below.
+    fn server_with_remote_channel() -> (Arc<Server>, Arc<ChannelEntry>) {
+        let server = test_server();
+        assert!(server.route_authorize("2BB", "2BB"));
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
+                .is_none()
+        );
+        server.remote_join("#general", "2BBaaa", MemberPrefix::default(), 0);
+        let channel = server.find_channel("#general").expect("channel exists");
+        (server, channel)
+    }
+
+    #[test]
+    fn plugin_mode_and_topic_actions_apply_as_the_server() {
+        use crate::plugin::Action;
+        let (server, channel) = server_with_remote_channel();
+
+        server.apply_plugin_actions(vec![
+            Action::Mode {
+                channel: "#general".to_owned(),
+                flags: "+m".to_owned(),
+                args: Vec::new(),
+            },
+            Action::Topic {
+                channel: "#general".to_owned(),
+                text: "quiet please".to_owned(),
+            },
+        ]);
+
+        let data = channel.data.lock();
+        assert!(data.modes.moderated);
+        let topic = data.topic.as_ref().expect("topic set");
+        assert_eq!(topic.text, "quiet please");
+        // The server signs its own moderation, not some user's nick.
+        assert_eq!(topic.set_by, "irc.a");
+    }
+
+    #[test]
+    fn plugin_kick_action_removes_a_remote_member() {
+        use crate::plugin::Action;
+        let (server, channel) = server_with_remote_channel();
+        assert_eq!(channel.data.lock().remote_members.len(), 1);
+
+        server.apply_plugin_actions(vec![Action::Kick {
+            channel: "#general".to_owned(),
+            nick: "bob".to_owned(),
+            reason: "spam".to_owned(),
+        }]);
+
+        assert!(channel.data.lock().remote_members.is_empty());
+    }
+
+    #[test]
+    fn plugin_mode_action_refuses_an_unresolvable_target() {
+        use crate::plugin::Action;
+        let (server, channel) = server_with_remote_channel();
+
+        // `+o ghost` names nobody: the whole change is dropped rather than
+        // applying the half of it that happens to resolve.
+        server.apply_plugin_actions(vec![Action::Mode {
+            channel: "#general".to_owned(),
+            flags: "+mo".to_owned(),
+            args: vec!["ghost".to_owned()],
+        }]);
+
+        assert!(!channel.data.lock().modes.moderated);
+    }
+
+    #[test]
+    fn plugin_kline_action_bans_and_records_its_author() {
+        use crate::plugin::Action;
+        let server = test_server();
+        server.apply_plugin_actions(vec![Action::Kline {
+            mask: "*!*@spam.example".to_owned(),
+            reason: "flooding".to_owned(),
+            set_by: "plugin:guard".to_owned(),
+        }]);
+
+        assert_eq!(
+            server.matches_kline("bob!u@spam.example").as_deref(),
+            Some("flooding")
+        );
+        assert!(server.matches_kline("bob!u@good.example").is_none());
+        let bans = server.klines_snapshot();
+        assert_eq!(bans.len(), 1);
+        assert_eq!(bans[0].set_by, "plugin:guard");
+    }
+
+    #[test]
+    fn a_peer_may_speak_for_the_servers_it_routes() {
+        let server = test_server();
+        assert!(server.route_authorize("2BB", "2BB"));
+        assert!(
+            server
+                .accept_remote_server(
+                    "2BB",
+                    RemoteServer {
+                        sid: "3CC".to_owned(),
+                        name: "irc.c".to_owned(),
+                        uplink: "2BB".to_owned(),
+                        description: "d".to_owned(),
+                    }
+                )
+                .is_ok()
+        );
+
+        // Plugin-originated output carries the originating server's name.
+        assert!(server.remote_source_authorized("2BB", "irc.c"));
+        // ...but only over the route that actually leads there.
+        assert!(!server.remote_source_authorized("9ZZ", "irc.c"));
+        // An unknown name is still a forgery.
+        assert!(!server.remote_source_authorized("2BB", "irc.nowhere"));
+    }
+
     #[test]
     fn remote_uid_index_survives_nick_change_and_quit() {
         let server = test_server();
         assert!(server.route_authorize("2BB", "2BB"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
+                .is_none()
+        );
 
         // Lookup by uid resolves through the index.
         assert!(server.remote_uid_authorized("2BB", "2BBaaa"));
@@ -4943,17 +5372,19 @@ mod tests {
         assert!(server.route_owner("5EE").is_none());
 
         // 3CC can now legitimately re-link through 4DD (no stale route).
-        assert!(server
-            .accept_remote_server(
-                "4DD",
-                RemoteServer {
-                    sid: "3CC".to_owned(),
-                    name: "irc.c".to_owned(),
-                    uplink: "4DD".to_owned(),
-                    description: String::new(),
-                },
-            )
-            .is_ok());
+        assert!(
+            server
+                .accept_remote_server(
+                    "4DD",
+                    RemoteServer {
+                        sid: "3CC".to_owned(),
+                        name: "irc.c".to_owned(),
+                        uplink: "4DD".to_owned(),
+                        description: String::new(),
+                    },
+                )
+                .is_ok()
+        );
 
         // Dropping the 2BB link quits its users and tells 4DD via SQUIT.
         server.drop_link("2BB");
@@ -5028,9 +5459,11 @@ mod tests {
 
         // A peer 2BB introduces remote user "bob" and joins #global.
         assert!(server.route_authorize("2BB", "2BB"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBbob", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBbob", "bob"))
+                .is_none()
+        );
         server.remote_join("#global", "2BBbob", MemberPrefix::default(), 0);
         let joined = drain_mailbox(&mut alice_rx);
         assert!(
@@ -5079,9 +5512,11 @@ mod tests {
         assert!(!server.route_authorize("2BB", "1AA"));
 
         // A user introduced on 2BB is actionable only by 2BB.
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
+                .is_none()
+        );
         assert!(server.remote_uid_authorized("2BB", "2BBaaa"));
         assert!(!server.remote_uid_authorized("2DD", "2BBaaa"));
         assert!(!server.remote_uid_authorized("2BB", "9ZZzzz")); // unknown uid
@@ -5125,9 +5560,11 @@ mod tests {
         let server = test_server();
 
         // First arrival: no collision.
-        assert!(server
-            .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
+                .is_none()
+        );
         assert_eq!(server.find_remote_user("dup").unwrap().uid, "1BBaaa");
 
         // A larger UID loses: a KILL is returned and the incumbent stays.
@@ -5139,22 +5576,28 @@ mod tests {
         assert_eq!(server.find_remote_user("dup").unwrap().uid, "1BBaaa");
 
         // A smaller UID wins: it replaces the incumbent, no KILL returned.
-        assert!(server
-            .accept_remote_user(remote("1AA", "1AAaaa", "dup"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("1AA", "1AAaaa", "dup"))
+                .is_none()
+        );
         assert_eq!(server.find_remote_user("dup").unwrap().uid, "1AAaaa");
     }
 
     #[test]
     fn remote_reintroduction_refreshes_without_kill() {
         let server = test_server();
-        assert!(server
-            .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
+                .is_none()
+        );
         // Same UID again (e.g. a re-burst) is not a collision.
-        assert!(server
-            .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("1BB", "1BBaaa", "dup"))
+                .is_none()
+        );
     }
 
     /// Set up a local registered client as a member of `chan`.
@@ -5192,9 +5635,11 @@ mod tests {
         let (alice, mut alice_rx) = local_in_channel(&server, 1, "alice", "#g", false);
 
         assert!(server.route_authorize("2BB", "2BB"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBbob", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBbob", "bob"))
+                .is_none()
+        );
         server.remote_join("#g", "2BBbob", MemberPrefix::default(), 0);
         let _ = drain_mailbox(&mut alice_rx);
 
@@ -5245,9 +5690,11 @@ mod tests {
         ));
 
         assert!(server.route_authorize("2BB", "2BB"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBbob", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBbob", "bob"))
+                .is_none()
+        );
         server.remote_join("#g", "2BBbob", MemberPrefix::default(), 0);
         let _ = drain_mailbox(&mut alice_rx);
         let _ = drain_mailbox(&mut carol_rx);
@@ -5281,12 +5728,16 @@ mod tests {
         let server = test_server();
         assert!(server.route_authorize("2BB", "2BB"));
         assert!(server.route_authorize("3CC", "3CC"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBaaa", "anna"))
-            .is_none());
-        assert!(server
-            .accept_remote_user(remote("3CC", "3CCbbb", "bea"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBaaa", "anna"))
+                .is_none()
+        );
+        assert!(
+            server
+                .accept_remote_user(remote("3CC", "3CCbbb", "bea"))
+                .is_none()
+        );
 
         // The smaller uid renames onto "bea": the incumbent (larger uid) is
         // killed and the rename goes through.
@@ -5296,9 +5747,11 @@ mod tests {
 
         // A larger uid renaming onto an existing nick loses: a KILL comes back
         // and the renamer is dropped.
-        assert!(server
-            .accept_remote_user(remote("3CC", "3CCccc", "cora"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("3CC", "3CCccc", "cora"))
+                .is_none()
+        );
         let verdict = server.remote_nick_change("3CCccc", "bea");
         assert!(matches!(
             verdict,
@@ -5326,9 +5779,11 @@ mod tests {
             );
         }
         assert!(server.route_authorize("2BB", "2BB"));
-        assert!(server
-            .accept_remote_user(remote("2BB", "2BBbob", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBbob", "bob"))
+                .is_none()
+        );
         server.remote_join("#a", "2BBbob", MemberPrefix::default(), 0);
         server.remote_join("#b", "2BBbob", MemberPrefix::default(), 0);
         let _ = drain_mailbox(&mut alice_rx);
@@ -5341,12 +5796,16 @@ mod tests {
             "QUIT must be deduped across shared channels: {seen:?}"
         );
         // Membership and index are fully purged.
-        assert!(server
-            .find_channel("#a")
-            .is_none_or(|c| c.data.lock().remote_members.is_empty()));
-        assert!(server
-            .find_channel("#b")
-            .is_none_or(|c| c.data.lock().remote_members.is_empty()));
+        assert!(
+            server
+                .find_channel("#a")
+                .is_none_or(|c| c.data.lock().remote_members.is_empty())
+        );
+        assert!(
+            server
+                .find_channel("#b")
+                .is_none_or(|c| c.data.lock().remote_members.is_empty())
+        );
     }
 
     /// Drain a link mailbox (the peer-facing byte stream) into one string.
@@ -5381,9 +5840,11 @@ mod tests {
         }
         // A remote user routed via another peer must also be bursted (multi-hop).
         assert!(server.route_authorize("3CC", "3CC"));
-        assert!(server
-            .accept_remote_user(remote("3CC", "3CCbob", "bob"))
-            .is_none());
+        assert!(
+            server
+                .accept_remote_user(remote("3CC", "3CCbob", "bob"))
+                .is_none()
+        );
         server.remote_join("#g", "3CCbob", MemberPrefix::default(), 0);
 
         let (tx, mut rx) = mpsc::channel::<Bytes>(256);

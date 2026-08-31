@@ -174,10 +174,19 @@ recv_rate = 10
 # max_memory = 16777216           # per-instance linear-memory cap (bytes)
 # expose_private_messages = false # feed DMs to plugins (privacy: your call)
 # state_dir = "/var/lib/ferrixd/plugin-state"  # persist plugin KV stores
+# tick_secs = 0                   # >0 calls ferrix_on_timer that often
 #
 # Capability grants (deny-by-default): plugin file stem -> capabilities.
+# Available: send_notice, send_message, kick, mode, topic, kline.
+# Grant the narrowest set that does the job — `kline` disconnects users.
 # [plugins.grants]
-# "20-modbot" = ["send_notice"]
+# "20-modbot" = ["send_notice", "kick", "mode"]
+#
+# Per-plugin settings, readable through ferrix.config_get. Lets one .wasm
+# file be deployed with site-specific parameters instead of recompiled.
+# [plugins.config."20-modbot"]
+# report_channel = "#ops"
+# threshold = "5"
 
 # --- S2S peer links ---
 # Trust is the pinned TLS certificate fingerprint plus the shared password.

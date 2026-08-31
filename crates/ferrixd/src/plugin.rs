@@ -2,9 +2,9 @@
 //!
 //! Plugins are sandboxed `.wasm` modules loaded at startup. They observe
 //! server events, may veto or rewrite them, keep bounded per-plugin state,
-//! query a read-only view of the world, and — when the operator grants the
-//! capability — perform a small set of actions (server notices). All of it
-//! without native code in the daemon.
+//! query a read-only view of the world, run on a timer, and — when the operator
+//! grants the capability — act on the server: notices, messages, kicks, channel
+//! modes, topics, and K-Lines. All of it without native code in the daemon.
 //!
 //! Sandbox properties:
 //!  * **Isolation** — WebAssembly has no ambient authority. A plugin can only
@@ -16,12 +16,14 @@
 //!    loops forever runs out of fuel and traps; one that grows memory without
 //!    limit hits the cap. The host treats a trap as "allow" (fail-open) so a
 //!    broken plugin cannot wedge the server.
-//!  * **Deny-by-default capabilities** — active abilities (`send_notice`) work
-//!    only when the operator grants them per plugin in the server config; a
-//!    plugin cannot grant itself anything.
+//!  * **Deny-by-default capabilities** — every active ability (see
+//!    [`Capability`]) works only when the operator grants it to that plugin in
+//!    the server config; a plugin cannot grant itself anything, and an
+//!    ungranted call refuses and logs rather than silently succeeding.
 //!  * **No event amplification** — plugin-produced output is sanitized (no
 //!    CR/LF injection), budgeted per hook call, rate-limited per plugin, and
-//!    server-originated notices do not re-enter the plugin hooks.
+//!    server-originated output does not re-enter the plugin hooks — locally,
+//!    or as a relayed message arriving from another node's plugin.
 //!  * **Memory-safe by construction** — we use [`wasmi`], a pure-Rust
 //!    interpreter, so the host stays free of a JIT and of `cmake`/C toolchains,
 //!    consistent with the rest of ferrixd.
@@ -36,16 +38,21 @@
 //!
 //! Both local and S2S-relayed channel messages pass through the message hooks,
 //! so policy is uniform across the network's entry points on this node.
+//!
+//! Actions a plugin queues are never executed from inside the sandbox: the host
+//! collects them in [`Outcome::actions`] and the server applies them after the
+//! call returns (see `Server::apply_plugin_actions`), sourced from the server
+//! itself and propagated over S2S like any other server-originated state.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
 use anyhow::{Context, Result};
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use parking_lot::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 use wasmi::{
     Caller, Config, Engine, Extern, Linker, Memory, Module, ResourceLimiter, Store, StoreLimits,
     StoreLimitsBuilder, TypedFunc,
@@ -58,7 +65,7 @@ pub const DEFAULT_FUEL: u64 = 5_000_000;
 pub const DEFAULT_MAX_MEMORY: usize = 16 * 1024 * 1024;
 
 /// The ABI level reported to plugins in the `ferrix_on_load` payload.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 // --- plugin output bounds (all enforced host-side) -------------------------
 /// Longest replacement/notice text a plugin can produce (bytes, pre-truncated
@@ -68,6 +75,16 @@ const MAX_TEXT_BYTES: usize = 400;
 const MAX_REASON_BYTES: usize = 200;
 /// Longest action target (nick or channel) a plugin can name (bytes).
 const MAX_TARGET_BYTES: usize = 64;
+/// Longest ban mask a plugin can name in a `kline` action (bytes).
+const MAX_MASK_BYTES: usize = 128;
+/// Longest mode string (flags plus arguments) a plugin can apply (bytes).
+const MAX_MODE_BYTES: usize = 128;
+/// Most arguments a plugin-supplied mode string may carry.
+const MAX_MODE_ARGS: usize = 8;
+/// Longest topic a plugin can set (bytes) — the server's own TOPICLEN.
+const MAX_TOPIC_BYTES: usize = 390;
+/// Most random bytes one `ferrix.random_bytes` call yields.
+const MAX_RANDOM_BYTES: usize = 256;
 /// Actions (e.g. notices) a single hook call may queue.
 const MAX_ACTIONS_PER_CALL: usize = 4;
 /// Actions a plugin may perform per rolling minute (across all hook calls).
@@ -117,6 +134,48 @@ pub enum Action {
         /// Notice body (control characters stripped, length-capped).
         text: String,
     },
+    /// Send a server PRIVMSG to a nick or channel. Requires `send_message`.
+    Message {
+        /// Nick or channel name to deliver to.
+        target: String,
+        /// Message body (control characters stripped, length-capped).
+        text: String,
+    },
+    /// Remove a user from a channel as the server. Requires `kick`.
+    Kick {
+        /// Channel to kick from.
+        channel: String,
+        /// Nick of the user to remove (local or on a linked server).
+        nick: String,
+        /// Kick reason.
+        reason: String,
+    },
+    /// Apply a channel mode change as the server. Requires `mode`.
+    Mode {
+        /// Channel to change.
+        channel: String,
+        /// Mode flags.
+        flags: String,
+        /// Mode arguments, in flag order (nicks for `o`/`v`).
+        args: Vec<String>,
+    },
+    /// Set (or clear, with empty text) a channel topic as the server.
+    /// Requires `topic`.
+    Topic {
+        /// Channel to retopic.
+        channel: String,
+        /// New topic; empty clears it.
+        text: String,
+    },
+    /// Add a K-Line and disconnect the users it matches. Requires `kline`.
+    Kline {
+        /// `nick!user@host` glob to ban.
+        mask: String,
+        /// Ban reason, shown to the disconnected users.
+        reason: String,
+        /// Who the ban is recorded as (`plugin:<name>`).
+        set_by: String,
+    },
 }
 
 /// The combined result of running one event through every plugin.
@@ -139,20 +198,41 @@ pub struct Outcome {
 pub enum Capability {
     /// May queue server NOTICEs via `ferrix.send_notice`.
     SendNotice,
+    /// May queue server PRIVMSGs via `ferrix.send_message`.
+    SendMessage,
+    /// May remove users from channels via `ferrix.kick`.
+    Kick,
+    /// May change channel modes via `ferrix.set_mode`.
+    Mode,
+    /// May change channel topics via `ferrix.set_topic`.
+    Topic,
+    /// May ban hostmasks via `ferrix.kline`.
+    Kline,
 }
+
+/// Grant table: the config spelling of every capability, in doc order.
+const CAPABILITIES: &[(Capability, &str)] = &[
+    (Capability::SendNotice, "send_notice"),
+    (Capability::SendMessage, "send_message"),
+    (Capability::Kick, "kick"),
+    (Capability::Mode, "mode"),
+    (Capability::Topic, "topic"),
+    (Capability::Kline, "kline"),
+];
 
 impl Capability {
     fn parse(s: &str) -> Option<Self> {
-        match s {
-            "send_notice" => Some(Capability::SendNotice),
-            _ => None,
-        }
+        CAPABILITIES
+            .iter()
+            .find(|(_, name)| *name == s)
+            .map(|&(cap, _)| cap)
     }
 
     fn name(self) -> &'static str {
-        match self {
-            Capability::SendNotice => "send_notice",
-        }
+        CAPABILITIES
+            .iter()
+            .find(|&&(cap, _)| cap == self)
+            .map_or("unknown", |&(_, name)| name)
     }
 }
 
@@ -165,6 +245,15 @@ pub trait WorldView: Send + Sync {
     /// A JSON object describing a locally connected user, or `None` if the
     /// nick is unknown.
     fn user_info_json(&self, nick: &str) -> Option<String>;
+    /// A JSON object describing this server and network (never fails: the
+    /// server always knows itself).
+    fn server_info_json(&self) -> String;
+    /// A JSON object describing a channel (topic, modes, counts), or `None`
+    /// if it does not exist.
+    fn channel_info_json(&self, channel: &str) -> Option<String>;
+    /// Display names of the channels a locally connected user is in, or
+    /// `None` if the nick is unknown.
+    fn user_channels(&self, nick: &str) -> Option<Vec<String>>;
 }
 
 /// Late-bound world reference: instances are created before the server exists,
@@ -186,6 +275,9 @@ enum Hook {
     PrivateMessage,
     Connect,
     Quit,
+    Away,
+    Account,
+    Timer,
     Load,
 }
 
@@ -203,6 +295,9 @@ const HOOK_EXPORTS: &[(Hook, &str)] = &[
     (Hook::PrivateMessage, "ferrix_on_private_message"),
     (Hook::Connect, "ferrix_on_connect"),
     (Hook::Quit, "ferrix_on_quit"),
+    (Hook::Away, "ferrix_on_away"),
+    (Hook::Account, "ferrix_on_account"),
+    (Hook::Timer, "ferrix_on_timer"),
     (Hook::Load, "ferrix_on_load"),
 ];
 
@@ -332,6 +427,9 @@ struct HostState {
     caps: Vec<Capability>,
     /// Late-bound read-only server view for the query host functions.
     world: Arc<WorldSlot>,
+    /// Operator-supplied settings for this plugin (`[plugins.config.<name>]`),
+    /// readable through `ferrix.config_get`.
+    config: HashMap<String, String>,
     kv: KvStore,
     /// Linear-memory cap, consulted by wasmi on every `memory.grow`.
     limits: StoreLimits,
@@ -345,6 +443,20 @@ struct HostState {
 impl HostState {
     fn has_cap(&self, cap: Capability) -> bool {
         self.caps.contains(&cap)
+    }
+
+    /// Gate an active host function on its grant, logging the refusal once per
+    /// call site so an operator can see which grant a plugin is missing.
+    fn require_cap(&self, cap: Capability, func: &str) -> bool {
+        if self.has_cap(cap) {
+            return true;
+        }
+        warn!(
+            plugin = %self.name,
+            capability = cap.name(),
+            "ferrix.{func} without the required grant"
+        );
+        false
     }
 
     /// Account one action against the per-call budget and the rolling-minute
@@ -424,6 +536,14 @@ pub(crate) fn push_json_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
+/// Append an optional string as a JSON value: the string literal, or `null`.
+pub(crate) fn push_json_optional(out: &mut String, value: Option<&str>) {
+    match value {
+        Some(value) => push_json_string(out, value),
+        None => out.push_str("null"),
+    }
+}
+
 /// Build a flat JSON object from string fields.
 fn json_event(fields: &[(&str, &str)]) -> String {
     let mut out = String::with_capacity(fields.iter().map(|(k, v)| k.len() + v.len() + 6).sum());
@@ -469,6 +589,47 @@ fn valid_target(target: &str) -> bool {
             .any(|c| c.is_whitespace() || (c as u32) < 0x21 || matches!(c, ',' | '*' | '?' | '!'))
 }
 
+/// Whether a plugin-supplied ban mask is safe to install as a K-Line. Masks
+/// legitimately contain `!`, `@`, `*` and — for extended account bans like
+/// `~a:name` — an embedded colon, so only framing hazards are checked: no
+/// whitespace, no control characters, and no *leading* colon (which would turn
+/// the mask into a trailing parameter wherever it is echoed).
+fn valid_mask(mask: &str) -> bool {
+    !mask.is_empty()
+        && mask.len() <= MAX_MASK_BYTES
+        && !mask.starts_with(':')
+        && !mask.chars().any(|c| c.is_whitespace() || (c as u32) < 0x21)
+}
+
+/// Split a plugin-supplied mode string into flags plus arguments, rejecting
+/// anything that is not a plain `[+-]<letters>` sequence with simple word
+/// arguments. Returns `None` when the string is unusable.
+fn parse_mode_string(raw: &str) -> Option<(String, Vec<String>)> {
+    let mut words = raw.split_whitespace();
+    let flags = words.next()?;
+    if flags.len() > MAX_MODE_BYTES
+        || !flags
+            .chars()
+            .all(|c| c == '+' || c == '-' || c.is_ascii_alphabetic())
+        || !flags.chars().any(|c| c.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let mut args = Vec::new();
+    for word in words {
+        if args.len() >= MAX_MODE_ARGS {
+            return None; // rather refuse than silently apply a truncated change
+        }
+        // A leading colon would smuggle a trailing parameter into the MODE
+        // line; embedded ones are legitimate (`+b ~a:account`).
+        if word.len() > MAX_TARGET_BYTES || word.starts_with(':') {
+            return None;
+        }
+        args.push(word.to_owned());
+    }
+    Some((flags.to_owned(), args))
+}
+
 /// A registry of loaded WebAssembly plugins.
 #[derive(Debug)]
 pub struct PluginHost {
@@ -477,6 +638,7 @@ pub struct PluginHost {
     max_memory: usize,
     expose_private_messages: bool,
     grants: HashMap<String, Vec<Capability>>,
+    plugin_config: HashMap<String, HashMap<String, String>>,
     state_dir: Option<PathBuf>,
     world: Arc<WorldSlot>,
     plugins: Vec<Mutex<PluginInstance>>,
@@ -494,6 +656,7 @@ impl PluginHost {
             max_memory: DEFAULT_MAX_MEMORY,
             expose_private_messages: false,
             grants: HashMap::new(),
+            plugin_config: HashMap::new(),
             state_dir: None,
             world: Arc::new(OnceLock::new()),
             plugins: Vec::new(),
@@ -533,6 +696,15 @@ impl PluginHost {
                 }
             }
             self.grants.insert(plugin.clone(), parsed);
+        }
+    }
+
+    /// Set the per-plugin operator settings (`[plugins.config.<name>]`),
+    /// readable by a plugin through `ferrix.config_get`. Applies to plugins
+    /// loaded after this call.
+    pub fn set_plugin_config(&mut self, config: &HashMap<String, HashMap<String, String>>) {
+        for (plugin, settings) in config {
+            self.plugin_config.insert(plugin.clone(), settings.clone());
         }
     }
 
@@ -634,6 +806,7 @@ impl PluginHost {
                 name: name.to_owned(),
                 caps: caps.clone(),
                 world: Arc::clone(&self.world),
+                config: self.plugin_config.get(name).cloned().unwrap_or_default(),
                 kv,
                 limits: StoreLimitsBuilder::new()
                     .memory_size(self.max_memory)
@@ -906,10 +1079,7 @@ impl PluginHost {
         event.push_str(",\"host\":");
         push_json_string(&mut event, host);
         event.push_str(",\"account\":");
-        match account {
-            Some(account) => push_json_string(&mut event, account),
-            None => event.push_str("null"),
-        }
+        push_json_optional(&mut event, account);
         event.push('}');
         self.run_observe(Hook::Connect, &event)
     }
@@ -925,6 +1095,54 @@ impl PluginHost {
             Hook::Quit,
             &json_event(&[("nick", nick), ("reason", reason)]),
         )
+    }
+
+    /// Observe-only: a client's away state changed (`None` = back).
+    #[must_use]
+    pub fn on_away(&self, nick: &str, message: Option<&str>) -> Outcome {
+        if self.plugins.is_empty() {
+            return Outcome::default();
+        }
+        let mut event = String::from("{\"nick\":");
+        push_json_string(&mut event, nick);
+        event.push_str(",\"message\":");
+        push_json_optional(&mut event, message);
+        event.push('}');
+        self.run_observe(Hook::Away, &event)
+    }
+
+    /// Observe-only: a client logged in or out of an account (`None` = out).
+    #[must_use]
+    pub fn on_account(&self, nick: &str, account: Option<&str>) -> Outcome {
+        if self.plugins.is_empty() {
+            return Outcome::default();
+        }
+        let mut event = String::from("{\"nick\":");
+        push_json_string(&mut event, nick);
+        event.push_str(",\"account\":");
+        push_json_optional(&mut event, account);
+        event.push('}');
+        self.run_observe(Hook::Account, &event)
+    }
+
+    /// Observe-only: the periodic tick (`[plugins].tick_secs`). `tick` counts
+    /// from 1 and lets a plugin sub-divide the interval without its own clock.
+    #[must_use]
+    pub fn on_timer(&self, tick: u64) -> Outcome {
+        if self.plugins.is_empty() {
+            return Outcome::default();
+        }
+        let event = format!("{{\"tick\":{tick},\"now_ms\":{}}}", wall_ms());
+        self.run_observe(Hook::Timer, &event)
+    }
+
+    /// Whether any loaded plugin exports the timer hook (so the server can
+    /// skip spawning the ticker entirely).
+    #[must_use]
+    pub fn wants_timer(&self) -> bool {
+        self.plugins
+            .iter()
+            .any(|plugin| plugin.lock().hooks.contains_key(&Hook::Timer))
     }
 }
 
@@ -1115,8 +1333,7 @@ fn register_host_api(linker: &mut Linker<HostState>) -> Result<()> {
                     return 1;
                 };
                 let state = caller.data_mut();
-                if !state.has_cap(Capability::SendNotice) {
-                    warn!(plugin = %state.name, "ferrix.send_notice without a `send_notice` grant");
+                if !state.require_cap(Capability::SendNotice, "send_notice") {
                     return 1;
                 }
                 if !valid_target(&target) {
@@ -1131,6 +1348,201 @@ fn register_host_api(linker: &mut Linker<HostState>) -> Result<()> {
             },
         )
         .context("host function ferrix.send_notice")?;
+
+    // send_message(tptr, tlen, ptr, len) -> i32: queue a server PRIVMSG to a
+    // nick or channel. Same contract and budget as send_notice; requires the
+    // `send_message` capability.
+    linker
+        .func_wrap(
+            "ferrix",
+            "send_message",
+            |mut caller: Caller<'_, HostState>, tptr: i32, tlen: i32, ptr: i32, len: i32| -> i32 {
+                let Some(target) = read_plugin_string(&caller, tptr, tlen, 512) else {
+                    return 1;
+                };
+                let Some(text) = read_plugin_string(&caller, ptr, len, 4096) else {
+                    return 1;
+                };
+                let state = caller.data_mut();
+                if !state.require_cap(Capability::SendMessage, "send_message") {
+                    return 1;
+                }
+                if !valid_target(&target) {
+                    return 1;
+                }
+                let text = sanitize_text(&text, MAX_TEXT_BYTES, false);
+                if text.is_empty() || !state.take_action_slot() {
+                    return 1;
+                }
+                state.call.actions.push(Action::Message { target, text });
+                0
+            },
+        )
+        .context("host function ferrix.send_message")?;
+
+    // kick(cptr, clen, nptr, nlen, rptr, rlen) -> i32: queue a server KICK.
+    // Requires the `kick` capability. 0 = queued, 1 = refused.
+    linker
+        .func_wrap(
+            "ferrix",
+            "kick",
+            |mut caller: Caller<'_, HostState>,
+             cptr: i32,
+             clen: i32,
+             nptr: i32,
+             nlen: i32,
+             rptr: i32,
+             rlen: i32|
+             -> i32 {
+                let Some(channel) = read_plugin_string(&caller, cptr, clen, 512) else {
+                    return 1;
+                };
+                let Some(nick) = read_plugin_string(&caller, nptr, nlen, 512) else {
+                    return 1;
+                };
+                let reason = read_plugin_string(&caller, rptr, rlen, 1024).unwrap_or_default();
+                let state = caller.data_mut();
+                if !state.require_cap(Capability::Kick, "kick") {
+                    return 1;
+                }
+                if !valid_target(&channel) || !channel.starts_with('#') || !valid_target(&nick) {
+                    return 1;
+                }
+                let reason = sanitize_text(&reason, MAX_REASON_BYTES, true);
+                if !state.take_action_slot() {
+                    return 1;
+                }
+                let reason = if reason.is_empty() {
+                    format!("Kicked by {}", state.name)
+                } else {
+                    reason
+                };
+                state.call.actions.push(Action::Kick {
+                    channel,
+                    nick,
+                    reason,
+                });
+                0
+            },
+        )
+        .context("host function ferrix.kick")?;
+
+    // set_mode(cptr, clen, mptr, mlen) -> i32: queue a server-applied channel
+    // mode change (`"+b nick!*@*"`). Requires the `mode` capability.
+    linker
+        .func_wrap(
+            "ferrix",
+            "set_mode",
+            |mut caller: Caller<'_, HostState>,
+             cptr: i32,
+             clen: i32,
+             mptr: i32,
+             mlen: i32|
+             -> i32 {
+                let Some(channel) = read_plugin_string(&caller, cptr, clen, 512) else {
+                    return 1;
+                };
+                let Some(modes) = read_plugin_string(&caller, mptr, mlen, 1024) else {
+                    return 1;
+                };
+                let state = caller.data_mut();
+                if !state.require_cap(Capability::Mode, "set_mode") {
+                    return 1;
+                }
+                if !valid_target(&channel) || !channel.starts_with('#') {
+                    return 1;
+                }
+                let Some((flags, args)) = parse_mode_string(&modes) else {
+                    return 1;
+                };
+                if !state.take_action_slot() {
+                    return 1;
+                }
+                state.call.actions.push(Action::Mode {
+                    channel,
+                    flags,
+                    args,
+                });
+                0
+            },
+        )
+        .context("host function ferrix.set_mode")?;
+
+    // set_topic(cptr, clen, tptr, tlen) -> i32: queue a server-set channel
+    // topic (empty text clears it). Requires the `topic` capability.
+    linker
+        .func_wrap(
+            "ferrix",
+            "set_topic",
+            |mut caller: Caller<'_, HostState>,
+             cptr: i32,
+             clen: i32,
+             tptr: i32,
+             tlen: i32|
+             -> i32 {
+                let Some(channel) = read_plugin_string(&caller, cptr, clen, 512) else {
+                    return 1;
+                };
+                let text = read_plugin_string(&caller, tptr, tlen, 4096).unwrap_or_default();
+                let state = caller.data_mut();
+                if !state.require_cap(Capability::Topic, "set_topic") {
+                    return 1;
+                }
+                if !valid_target(&channel) || !channel.starts_with('#') {
+                    return 1;
+                }
+                let text = sanitize_text(&text, MAX_TOPIC_BYTES, false);
+                if !state.take_action_slot() {
+                    return 1;
+                }
+                state.call.actions.push(Action::Topic { channel, text });
+                0
+            },
+        )
+        .context("host function ferrix.set_topic")?;
+
+    // kline(mptr, mlen, rptr, rlen) -> i32: queue a K-Line for a hostmask glob
+    // and the disconnect of the users it matches. Requires the `kline`
+    // capability — the sharpest edge in the grants table.
+    linker
+        .func_wrap(
+            "ferrix",
+            "kline",
+            |mut caller: Caller<'_, HostState>,
+             mptr: i32,
+             mlen: i32,
+             rptr: i32,
+             rlen: i32|
+             -> i32 {
+                let Some(mask) = read_plugin_string(&caller, mptr, mlen, 512) else {
+                    return 1;
+                };
+                let reason = read_plugin_string(&caller, rptr, rlen, 1024).unwrap_or_default();
+                let state = caller.data_mut();
+                if !state.require_cap(Capability::Kline, "kline") {
+                    return 1;
+                }
+                if !valid_mask(&mask) {
+                    return 1;
+                }
+                let reason = sanitize_text(&reason, MAX_REASON_BYTES, true);
+                if !state.take_action_slot() {
+                    return 1;
+                }
+                let reason = if reason.is_empty() {
+                    "K-Lined".to_owned()
+                } else {
+                    reason
+                };
+                state.call.actions.push(Action::Kline {
+                    mask,
+                    reason,
+                    set_by: format!("plugin:{}", state.name),
+                });
+                0
+            },
+        )
+        .context("host function ferrix.kline")?;
 
     // kv_set(kptr, klen, vptr, vlen) -> i32: store a value under a UTF-8 key
     // (empty value deletes). 0 = ok, 1 = refused (bounds exceeded).
@@ -1259,6 +1671,151 @@ fn register_host_api(linker: &mut Linker<HostState>) -> Result<()> {
             },
         )
         .context("host function ferrix.user_info")?;
+
+    // server_info(outptr, outcap) -> i32: JSON object describing this server
+    // and network. Same length contract as the other queries; -1 only when the
+    // server view is gone (shutdown).
+    linker
+        .func_wrap(
+            "ferrix",
+            "server_info",
+            |mut caller: Caller<'_, HostState>, outptr: i32, outcap: i32| -> i32 {
+                let Some(world) = caller.data().world.get().and_then(Weak::upgrade) else {
+                    return -1;
+                };
+                let json = world.server_info_json();
+                write_plugin_bytes(&mut caller, outptr, outcap, json.as_bytes())
+            },
+        )
+        .context("host function ferrix.server_info")?;
+
+    // channel_info(cptr, clen, outptr, outcap) -> i32: JSON object describing
+    // a channel (topic, modes, counts). -1 for an unknown channel.
+    linker
+        .func_wrap(
+            "ferrix",
+            "channel_info",
+            |mut caller: Caller<'_, HostState>,
+             cptr: i32,
+             clen: i32,
+             outptr: i32,
+             outcap: i32|
+             -> i32 {
+                let Some(channel) = read_plugin_string(&caller, cptr, clen, 512) else {
+                    return -1;
+                };
+                let Some(world) = caller.data().world.get().and_then(Weak::upgrade) else {
+                    return -1;
+                };
+                let Some(json) = world.channel_info_json(&channel) else {
+                    return -1;
+                };
+                write_plugin_bytes(&mut caller, outptr, outcap, json.as_bytes())
+            },
+        )
+        .context("host function ferrix.channel_info")?;
+
+    // user_channels(nptr, nlen, outptr, outcap) -> i32: JSON array of the
+    // channels a locally connected user is in. -1 for an unknown nick.
+    linker
+        .func_wrap(
+            "ferrix",
+            "user_channels",
+            |mut caller: Caller<'_, HostState>,
+             nptr: i32,
+             nlen: i32,
+             outptr: i32,
+             outcap: i32|
+             -> i32 {
+                let Some(nick) = read_plugin_string(&caller, nptr, nlen, 128) else {
+                    return -1;
+                };
+                let Some(world) = caller.data().world.get().and_then(Weak::upgrade) else {
+                    return -1;
+                };
+                let Some(channels) = world.user_channels(&nick) else {
+                    return -1;
+                };
+                let mut json = String::from("[");
+                for (i, name) in channels.iter().take(MAX_QUERY_MEMBERS).enumerate() {
+                    if i > 0 {
+                        json.push(',');
+                    }
+                    push_json_string(&mut json, name);
+                    if json.len() > MAX_QUERY_BYTES {
+                        break;
+                    }
+                }
+                json.push(']');
+                write_plugin_bytes(&mut caller, outptr, outcap, json.as_bytes())
+            },
+        )
+        .context("host function ferrix.user_channels")?;
+
+    // config_get(kptr, klen, outptr, outcap) -> i32: read one operator-supplied
+    // setting from `[plugins.config.<plugin>]`. -1 when the key is unset, so a
+    // plugin can tell "empty string" from "not configured".
+    linker
+        .func_wrap(
+            "ferrix",
+            "config_get",
+            |mut caller: Caller<'_, HostState>,
+             kptr: i32,
+             klen: i32,
+             outptr: i32,
+             outcap: i32|
+             -> i32 {
+                let Some(key) = read_plugin_string(&caller, kptr, klen, 256) else {
+                    return -1;
+                };
+                let Some(value) = caller.data().config.get(&key).cloned() else {
+                    return -1;
+                };
+                write_plugin_bytes(&mut caller, outptr, outcap, value.as_bytes())
+            },
+        )
+        .context("host function ferrix.config_get")?;
+
+    // random_bytes(outptr, len) -> i32: fill up to MAX_RANDOM_BYTES bytes from
+    // the OS CSPRNG. A sandbox has no entropy of its own, and rolling one from
+    // now_ms is how plugins end up with predictable nonces. Returns the number
+    // of bytes written, or -1 on failure.
+    linker
+        .func_wrap(
+            "ferrix",
+            "random_bytes",
+            |mut caller: Caller<'_, HostState>, outptr: i32, len: i32| -> i32 {
+                let len = (len.max(0) as usize).min(MAX_RANDOM_BYTES);
+                let mut buf = vec![0u8; len];
+                if getrandom::fill(&mut buf).is_err() {
+                    return -1;
+                }
+                let written = write_plugin_bytes(&mut caller, outptr, len as i32, &buf);
+                if written < 0 { -1 } else { written }
+            },
+        )
+        .context("host function ferrix.random_bytes")?;
+
+    // log_at(level, ptr, len): like `log`, but choosing the severity
+    // (0 = debug, 1 = info, 2 = warn, 3 = error). Anything else is info.
+    linker
+        .func_wrap(
+            "ferrix",
+            "log_at",
+            |caller: Caller<'_, HostState>, level: i32, ptr: i32, len: i32| {
+                let Some(text) = read_plugin_string(&caller, ptr, len, 4096) else {
+                    return;
+                };
+                let plugin = &caller.data().name;
+                match level {
+                    0 => debug!(plugin = %plugin, "plugin log: {text}"),
+                    2 => warn!(plugin = %plugin, "plugin log: {text}"),
+                    3 => error!(plugin = %plugin, "plugin log: {text}"),
+                    _ => info!(plugin = %plugin, "plugin log: {text}"),
+                }
+            },
+        )
+        .context("host function ferrix.log_at")?;
 
     Ok(())
 }
@@ -1757,6 +2314,15 @@ mod tests {
         fn user_info_json(&self, nick: &str) -> Option<String> {
             (nick == "alice").then(|| "{\"nick\":\"alice\"}".to_owned())
         }
+        fn server_info_json(&self) -> String {
+            "{\"name\":\"irc.test\",\"users\":2}".to_owned()
+        }
+        fn channel_info_json(&self, channel: &str) -> Option<String> {
+            (channel == "#general").then(|| "{\"name\":\"#general\",\"members\":2}".to_owned())
+        }
+        fn user_channels(&self, nick: &str) -> Option<Vec<String>> {
+            (nick == "alice").then(|| vec!["#general".to_owned()])
+        }
     }
 
     // Queries #general's member list into memory at 512 and blocks iff the
@@ -1786,6 +2352,282 @@ mod tests {
         let world: Arc<dyn WorldView> = Arc::new(FakeWorld);
         host.set_world(Arc::downgrade(&world));
         assert_eq!(host.on_message("x").verdict, Verdict::Block);
+    }
+
+    // --- ABI v3 -------------------------------------------------------------
+
+    /// Grant `caps` to a plugin named `name` and load `wat_src` into a fresh host.
+    fn host_with(name: &str, caps: &[&str], wat_src: &str) -> PluginHost {
+        let wasm = wat::parse_str(wat_src).unwrap();
+        let mut host = PluginHost::new(DEFAULT_FUEL);
+        if !caps.is_empty() {
+            let grants = HashMap::from([(
+                name.to_owned(),
+                caps.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>(),
+            )]);
+            host.set_grants(&grants);
+        }
+        host.load_bytes(name, &wasm).unwrap();
+        host
+    }
+
+    // Kicks alice from #general; returns the host function's own result, so a
+    // refusal (1) surfaces as a Block and a queued kick (0) as an Allow.
+    const KICKER: &str = r##"
+        (module
+          (import "ferrix" "kick" (func $kick (param i32 i32 i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "#general")
+          (data (i32.const 16) "alice")
+          (data (i32.const 32) "spam")
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_message") (param i32 i32) (result i32)
+            (call $kick (i32.const 0) (i32.const 8)
+                        (i32.const 16) (i32.const 5)
+                        (i32.const 32) (i32.const 4))))
+    "##;
+
+    #[test]
+    fn kick_action_needs_its_grant() {
+        // Ungranted: the host function refuses, nothing is queued.
+        let host = host_with("kicker", &[], KICKER);
+        let outcome = host.on_message("x");
+        assert_eq!(outcome.verdict, Verdict::Block); // the refusal code, surfaced
+        assert!(outcome.actions.is_empty());
+
+        // Granted: the action is queued for the server to run after the call.
+        let host = host_with("kicker", &["kick"], KICKER);
+        let outcome = host.on_message("x");
+        assert_eq!(outcome.verdict, Verdict::Allow);
+        assert_eq!(
+            outcome.actions,
+            vec![Action::Kick {
+                channel: "#general".to_owned(),
+                nick: "alice".to_owned(),
+                reason: "spam".to_owned(),
+            }]
+        );
+    }
+
+    // Moderates #general (+m) through the mode action.
+    const MODERATOR: &str = r##"
+        (module
+          (import "ferrix" "set_mode" (func $mode (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "#general")
+          (data (i32.const 16) "+m")
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_message") (param i32 i32) (result i32)
+            (call $mode (i32.const 0) (i32.const 8) (i32.const 16) (i32.const 2))))
+    "##;
+
+    #[test]
+    fn mode_action_is_queued_with_its_grant() {
+        let host = host_with("mod", &["mode"], MODERATOR);
+        let outcome = host.on_message("x");
+        assert_eq!(outcome.verdict, Verdict::Allow);
+        assert_eq!(
+            outcome.actions,
+            vec![Action::Mode {
+                channel: "#general".to_owned(),
+                flags: "+m".to_owned(),
+                args: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn mode_strings_are_parsed_and_bounded() {
+        assert_eq!(
+            parse_mode_string("+b nick!*@*"),
+            Some(("+b".to_owned(), vec!["nick!*@*".to_owned()]))
+        );
+        assert_eq!(parse_mode_string("+m"), Some(("+m".to_owned(), Vec::new())));
+        // No mode letter, a smuggled trailing parameter, or too many arguments.
+        assert_eq!(parse_mode_string("+"), None);
+        assert_eq!(parse_mode_string(""), None);
+        assert_eq!(parse_mode_string("+b :and a trailer"), None);
+        // Extended account bans keep their embedded colon.
+        assert_eq!(
+            parse_mode_string("+b ~a:spammer"),
+            Some(("+b".to_owned(), vec!["~a:spammer".to_owned()]))
+        );
+        let many = format!("+bbbbbbbbb{}", " m!*@*".repeat(MAX_MODE_ARGS + 1));
+        assert_eq!(parse_mode_string(&many), None);
+    }
+
+    #[test]
+    fn kline_masks_reject_framing_hazards() {
+        assert!(valid_mask("*!*@spam.example"));
+        assert!(valid_mask("~a:baduser"));
+        assert!(!valid_mask(""));
+        assert!(!valid_mask("has space"));
+        assert!(!valid_mask(":leading-colon"));
+        assert!(!valid_mask(&"a".repeat(MAX_MASK_BYTES + 1)));
+    }
+
+    // Reads `greeting` from the operator-supplied plugin config; blocks when
+    // the key is present (a non-negative length), allows when it is not.
+    const CONFIGURED: &str = r##"
+        (module
+          (import "ferrix" "config_get" (func $get (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "greeting")
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_message") (param i32 i32) (result i32)
+            (i32.ge_s
+              (call $get (i32.const 0) (i32.const 8) (i32.const 512) (i32.const 256))
+              (i32.const 0))))
+    "##;
+
+    #[test]
+    fn config_get_reads_operator_settings() {
+        let wasm = wat::parse_str(CONFIGURED).unwrap();
+
+        let mut host = PluginHost::new(DEFAULT_FUEL);
+        host.load_bytes("cfg", &wasm).unwrap();
+        assert_eq!(host.on_message("x").verdict, Verdict::Allow); // unset
+
+        let mut host = PluginHost::new(DEFAULT_FUEL);
+        host.set_plugin_config(&HashMap::from([(
+            "cfg".to_owned(),
+            HashMap::from([("greeting".to_owned(), "moin".to_owned())]),
+        )]));
+        host.load_bytes("cfg", &wasm).unwrap();
+        assert_eq!(host.on_message("x").verdict, Verdict::Block); // set
+    }
+
+    // Asks for 16 random bytes and blocks iff exactly that many were written.
+    const DICE: &str = r##"
+        (module
+          (import "ferrix" "random_bytes" (func $rand (param i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_message") (param i32 i32) (result i32)
+            (i32.eq (call $rand (i32.const 512) (i32.const 16)) (i32.const 16))))
+    "##;
+
+    #[test]
+    fn random_bytes_fills_the_requested_buffer() {
+        let host = host_with("dice", &[], DICE);
+        assert_eq!(host.on_message("x").verdict, Verdict::Block);
+    }
+
+    // A timer plugin that announces on every tick (observe-only hook, so the
+    // return value is ignored — the queued action is the observable effect).
+    const TICKER: &str = r##"
+        (module
+          (import "ferrix" "send_notice" (func $notice (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "#general")
+          (data (i32.const 16) "tick")
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_timer") (param i32 i32) (result i32)
+            (call $notice (i32.const 0) (i32.const 8) (i32.const 16) (i32.const 4))))
+    "##;
+
+    #[test]
+    fn timer_hook_fires_and_may_act() {
+        let host = host_with("ticker", &["send_notice"], TICKER);
+        assert!(host.wants_timer());
+        assert_eq!(
+            host.on_timer(1).actions,
+            vec![Action::Notice {
+                target: "#general".to_owned(),
+                text: "tick".to_owned(),
+            }]
+        );
+        // A plugin without the export never asks the server for a ticker.
+        assert!(!host_with("bang", &[], BANG_BLOCKER).wants_timer());
+    }
+
+    // Echoes the away/account payload back as a notice, so the test can assert
+    // on exactly what the host serialized.
+    const STATE_OBSERVER: &str = r##"
+        (module
+          (import "ferrix" "send_notice" (func $notice (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "#log")
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func $echo (param $ptr i32) (param $len i32) (result i32)
+            (call $notice (i32.const 0) (i32.const 4) (local.get $ptr) (local.get $len)))
+          (func (export "ferrix_on_away") (param $ptr i32) (param $len i32) (result i32)
+            (call $echo (local.get $ptr) (local.get $len)))
+          (func (export "ferrix_on_account") (param $ptr i32) (param $len i32) (result i32)
+            (call $echo (local.get $ptr) (local.get $len))))
+    "##;
+
+    #[test]
+    fn away_and_account_hooks_carry_nullable_fields() {
+        let host = host_with("obs", &["send_notice"], STATE_OBSERVER);
+        let text = |outcome: Outcome| {
+            outcome
+                .actions
+                .into_iter()
+                .find_map(|action| match action {
+                    Action::Notice { text, .. } => Some(text),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            text(host.on_away("alice", Some("brb"))),
+            r#"{"nick":"alice","message":"brb"}"#
+        );
+        assert_eq!(
+            text(host.on_away("alice", None)),
+            r#"{"nick":"alice","message":null}"#
+        );
+        assert_eq!(
+            text(host.on_account("alice", Some("acct"))),
+            r#"{"nick":"alice","account":"acct"}"#
+        );
+        assert_eq!(
+            text(host.on_account("alice", None)),
+            r#"{"nick":"alice","account":null}"#
+        );
+    }
+
+    // Queries server_info and blocks iff the response has a positive length.
+    const INSPECTOR: &str = r##"
+        (module
+          (import "ferrix" "server_info" (func $info (param i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (global $next (mut i32) (i32.const 4096))
+          (func (export "alloc") (param i32) (result i32)
+            (global.get $next))
+          (func (export "ferrix_on_message") (param i32 i32) (result i32)
+            (i32.gt_s (call $info (i32.const 512) (i32.const 256)) (i32.const 0))))
+    "##;
+
+    #[test]
+    fn server_info_query_reaches_the_world_view() {
+        let host = host_with("inspector", &[], INSPECTOR);
+        assert_eq!(host.on_message("x").verdict, Verdict::Allow); // no world yet
+        let world: Arc<dyn WorldView> = Arc::new(FakeWorld);
+        host.set_world(Arc::downgrade(&world));
+        assert_eq!(host.on_message("x").verdict, Verdict::Block);
+    }
+
+    #[test]
+    fn every_capability_round_trips_through_its_config_name() {
+        for &(cap, name) in CAPABILITIES {
+            assert_eq!(Capability::parse(name), Some(cap));
+            assert_eq!(cap.name(), name);
+        }
+        assert_eq!(Capability::parse("root"), None);
     }
 
     #[test]
