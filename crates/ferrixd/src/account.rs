@@ -9,8 +9,7 @@
 //! Account names are matched case-insensitively via the configured
 //! [`crate::casemap::CaseMapping`].
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use dashmap::DashMap;
 use subtle::ConstantTimeEq;
 
@@ -76,8 +75,7 @@ impl AccountStore {
             seed.push(b'.');
         }
         seed.truncate(48);
-        let salt = SaltString::encode_b64(&seed).map_err(|e| e.to_string())?;
-        Self::hash_with_salt(password, &salt)
+        Self::hash_with_salt(password, &seed)
     }
 
     /// Hash a plaintext password into an Argon2id PHC string using a fresh random
@@ -87,13 +85,12 @@ impl AccountStore {
     ///
     /// Returns an error string if entropy cannot be gathered or hashing fails.
     pub fn hash_password_random(password: &str) -> Result<String, String> {
-        let salt = random_salt_string()?;
-        Self::hash_with_salt(password, &salt)
+        Self::hash_with_salt(password, &random_salt_bytes()?)
     }
 
-    fn hash_with_salt(password: &str, salt: &SaltString) -> Result<String, String> {
+    fn hash_with_salt(password: &str, salt: &[u8]) -> Result<String, String> {
         Argon2::default()
-            .hash_password(password.as_bytes(), salt)
+            .hash_password_with_salt(password.as_bytes(), salt)
             .map(|h| h.to_string())
             .map_err(|e| e.to_string())
     }
@@ -294,11 +291,6 @@ fn random_salt_bytes() -> Result<[u8; 16], String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| format!("gathering entropy for salt: {e}"))?;
     Ok(bytes)
-}
-
-/// A random Argon2 [`SaltString`] gathered from the OS CSPRNG.
-fn random_salt_string() -> Result<SaltString, String> {
-    SaltString::encode_b64(&random_salt_bytes()?).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

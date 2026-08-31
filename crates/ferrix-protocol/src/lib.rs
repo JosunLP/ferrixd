@@ -39,4 +39,4 @@ pub mod tags;
 
 pub use limits::Limits;
 pub use message::{Command, Message, Params, Source, Tag, Tags};
-pub use parser::{parse, ParseError};
+pub use parser::{ParseError, parse};

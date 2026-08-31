@@ -99,7 +99,10 @@ async fn main() {
     println!("\n=== established ===");
     report(&stats, count, start);
     if elapsed.as_secs_f64() > 0.0 {
-        println!("rate: {:.0} registrations/sec", reg as f64 / elapsed.as_secs_f64());
+        println!(
+            "rate: {:.0} registrations/sec",
+            reg as f64 / elapsed.as_secs_f64()
+        );
     }
     println!("holding {hold_secs}s for measurement...");
 
@@ -147,14 +150,20 @@ async fn client(
         line.clear();
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "closed"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "closed",
+            ));
         }
         if line.contains(" 001 ") {
             stats.registered.fetch_add(1, Ordering::Relaxed);
             break;
         }
         if line.contains(" 433 ") || line.contains(" 432 ") {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, "nick rejected"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "nick rejected",
+            ));
         }
     }
 
@@ -166,7 +175,10 @@ async fn client(
             line.clear();
             let n = reader.read_line(&mut line).await?;
             if n == 0 {
-                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "closed"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "closed",
+                ));
             }
             if line.contains(" 366 ") {
                 stats.joined.fetch_add(1, Ordering::Relaxed);

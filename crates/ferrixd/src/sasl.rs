@@ -6,8 +6,8 @@
 //! data is base64 and may be split into 400-byte chunks; this module
 //! accumulates and decodes them.
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 
 /// Maximum accumulated SASL payload (a DoS guard on the base64 buffer).
 pub const MAX_SASL_LEN: usize = 8192;

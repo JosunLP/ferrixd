@@ -137,39 +137,39 @@ impl Event {
             out.push(if *wrote { ';' } else { '@' });
             *wrote = true;
         };
-        if let Some((cap, reference)) = &self.batch {
-            if caps.has(*cap) {
-                sep(&mut out, &mut wrote_tag);
-                out.push_str("batch=");
-                out.push_str(reference);
-            }
+        if let Some((cap, reference)) = &self.batch
+            && caps.has(*cap)
+        {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str("batch=");
+            out.push_str(reference);
         }
-        if let Some(tags) = &self.client_tags {
-            if caps.has(Cap::MessageTags) {
-                sep(&mut out, &mut wrote_tag);
-                out.push_str(tags);
-            }
+        if let Some(tags) = &self.client_tags
+            && caps.has(Cap::MessageTags)
+        {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str(tags);
         }
-        if let Some(time) = &self.time {
-            if caps.has(Cap::ServerTime) {
-                sep(&mut out, &mut wrote_tag);
-                out.push_str("time=");
-                out.push_str(time);
-            }
+        if let Some(time) = &self.time
+            && caps.has(Cap::ServerTime)
+        {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str("time=");
+            out.push_str(time);
         }
-        if let Some(msgid) = &self.msgid {
-            if caps.has(Cap::MessageTags) {
-                sep(&mut out, &mut wrote_tag);
-                out.push_str("msgid=");
-                out.push_str(msgid);
-            }
+        if let Some(msgid) = &self.msgid
+            && caps.has(Cap::MessageTags)
+        {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str("msgid=");
+            out.push_str(msgid);
         }
-        if let Some(account) = &self.account {
-            if caps.has(Cap::AccountTag) {
-                sep(&mut out, &mut wrote_tag);
-                out.push_str("account=");
-                out.push_str(account);
-            }
+        if let Some(account) = &self.account
+            && caps.has(Cap::AccountTag)
+        {
+            sep(&mut out, &mut wrote_tag);
+            out.push_str("account=");
+            out.push_str(account);
         }
         if self.bot && caps.has(Cap::MessageTags) {
             sep(&mut out, &mut wrote_tag);
@@ -179,10 +179,10 @@ impl Event {
             out.push(' ');
         }
         out.push_str(&self.body);
-        if let Some((cap, suffix)) = &self.suffix {
-            if caps.has(*cap) {
-                out.push_str(suffix);
-            }
+        if let Some((cap, suffix)) = &self.suffix
+            && caps.has(*cap)
+        {
+            out.push_str(suffix);
         }
         out.push_str("\r\n");
         Bytes::from(out)
@@ -244,10 +244,11 @@ fn to_channel_filtered(
         if required.is_some_and(|cap| !caps.has(cap)) {
             continue;
         }
-        if let Some(op_only) = status {
-            if !member.prefix.op && (op_only || !member.prefix.voice) {
-                continue;
-            }
+        if let Some(op_only) = status
+            && !member.prefix.op
+            && (op_only || !member.prefix.voice)
+        {
+            continue;
         }
         let key = caps.masked(mask).bits();
         let bytes = match cache.iter().find(|(k, _)| *k == key) {

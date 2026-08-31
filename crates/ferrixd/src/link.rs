@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use ferrix_protocol::Message;
 use futures_util::{SinkExt, StreamExt};
@@ -28,7 +28,7 @@ use tracing::{debug, info, warn};
 use crate::codec::IrcCodec;
 use crate::config::{LinkConfig, LinkProtocol};
 use crate::s2s::LinkMessage;
-use crate::state::{now_unix, LinkHandle, MemberPrefix, RemoteServer, RemoteUser, Server};
+use crate::state::{LinkHandle, MemberPrefix, RemoteServer, RemoteUser, Server, now_unix};
 use crate::ts6::{self, Ts6In, UidMapper};
 use crate::wire::Line;
 
