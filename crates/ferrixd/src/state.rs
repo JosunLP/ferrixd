@@ -734,9 +734,11 @@ impl Server {
             crate::deliver::to_client(&entry, &event);
         } else if let Some(user) = self.find_remote_user(&folded) {
             // A user on a linked server: route the message towards them.
+            // `UserMessage.target` is resolved as a nickname by the receiving
+            // server (see `deliver_remote_message`), not as a UID.
             let msg = crate::s2s::LinkMessage::UserMessage {
                 source: self.info.name.clone(),
-                target: user.uid.clone(),
+                target: user.nick.clone(),
                 notice,
                 msgid: Some(self.history.next_msgid()),
                 time_ms: Some(now_millis()),
@@ -815,7 +817,7 @@ impl Server {
                 _ => {}
             }
         }
-        let Some((applied_flags, applied_args)) =
+        let Some((applied_flags, applied_args, applied_wire)) =
             self.apply_mode_change(&display, "*", 0, flags, &wire)
         else {
             return;
@@ -833,7 +835,7 @@ impl Server {
                 source: "*".to_owned(),
                 ts: self.channel_ts(&display),
                 flags: applied_flags,
-                args: wire,
+                args: applied_wire,
             };
             self.propagate_to_links(&msg.to_line());
         }
@@ -3631,9 +3633,13 @@ impl Server {
     /// arguments are network UIDs; they are resolved to local or remote members
     /// here (and rendered as nicks for the announcement).
     ///
-    /// Returns the flags and rendered arguments that actually applied — the
-    /// caller decides whether that becomes a history event. `None` means
-    /// nothing changed (unknown channel, stale TS, or no applicable flag).
+    /// Returns what actually applied: the flags, the rendered arguments (nicks,
+    /// for the announcement and the history log) and the same arguments in wire
+    /// form (UIDs for `o`/`v`, for propagation). A mode can be dropped while a
+    /// later one applies — a duplicate ban, an unparseable limit, a target that
+    /// left — so a caller that propagates *must* use these, not what it asked
+    /// for, or the peer reads the wrong argument for the wrong flag. `None`
+    /// means nothing changed (unknown channel, stale TS, or no applicable flag).
     fn apply_mode_change(
         &self,
         channel_name: &str,
@@ -3641,7 +3647,7 @@ impl Server {
         peer_ts: u64,
         flags: &str,
         args: &[String],
-    ) -> Option<(String, Vec<String>)> {
+    ) -> Option<(String, Vec<String>, Vec<String>)> {
         let folded = self.fold(channel_name);
         let channel = self.find_channel(&folded)?;
         // TS resolution: modes from a *younger* view of the channel are stale —
@@ -3659,7 +3665,9 @@ impl Server {
         // locking rules forbid touching another client's data under it).
         enum Step {
             Bool(char, bool),
-            Prefix(char, bool, PrefixTarget, String),
+            /// Flag, adding, resolved member, display nick, and the UID the
+            /// argument arrived as (what peers expect back on the wire).
+            Prefix(char, bool, PrefixTarget, String, String),
             Key(bool, Option<String>),
             Limit(bool, Option<usize>),
             List(char, bool, String),
@@ -3684,6 +3692,7 @@ impl Server {
                                 adding,
                                 PrefixTarget::Local(id),
                                 entry.nick(),
+                                uid.clone(),
                             ));
                         }
                     } else if let Some(user) = self.remote_user_by_uid(uid) {
@@ -3692,6 +3701,7 @@ impl Server {
                             adding,
                             PrefixTarget::Remote(uid.clone()),
                             user.nick,
+                            uid.clone(),
                         ));
                     }
                 }
@@ -3731,6 +3741,7 @@ impl Server {
 
         let mut accum = ModeAccum::default();
         let mut applied_args: Vec<String> = Vec::new();
+        let mut wire_args: Vec<String> = Vec::new();
         let display = {
             let mut d = channel.data.lock();
             for step in steps {
@@ -3741,7 +3752,7 @@ impl Server {
                             accum.push(adding, c);
                         }
                     }
-                    Step::Prefix(c, adding, target, nick) => {
+                    Step::Prefix(c, adding, target, nick, uid) => {
                         let prefix = match target {
                             PrefixTarget::Local(id) => {
                                 d.members.get_mut(&id).map(|m| &mut m.prefix)
@@ -3758,18 +3769,26 @@ impl Server {
                             }
                             accum.push(adding, c);
                             applied_args.push(nick);
+                            wire_args.push(uid);
                         }
                     }
                     Step::Key(adding, key) => {
                         d.modes.key = key.clone();
                         accum.push(adding, 'k');
-                        applied_args.push(key.unwrap_or_else(|| "*".to_owned()));
+                        // `-k` announces `*` but carries no argument on the wire.
+                        if let Some(key) = key {
+                            applied_args.push(key.clone());
+                            wire_args.push(key);
+                        } else {
+                            applied_args.push("*".to_owned());
+                        }
                     }
                     Step::Limit(adding, limit) => {
                         d.modes.limit = limit;
                         accum.push(adding, 'l');
                         if let Some(limit) = limit {
                             applied_args.push(limit.to_string());
+                            wire_args.push(limit.to_string());
                         }
                     }
                     Step::List(c, adding, mask) => {
@@ -3778,6 +3797,9 @@ impl Server {
                             'e' => &mut d.exceptions,
                             _ => &mut d.invex,
                         };
+                        // A duplicate add or an absent removal applies nothing;
+                        // only mirror the argument when it really landed.
+                        let before = applied_args.len();
                         apply_list_mode(
                             list,
                             adding,
@@ -3787,6 +3809,9 @@ impl Server {
                             &mut applied_args,
                             c,
                         );
+                        if let Some(applied) = applied_args.get(before) {
+                            wire_args.push(applied.clone());
+                        }
                     }
                 }
             }
@@ -3804,7 +3829,7 @@ impl Server {
         }
         channel.broadcast(&line.build(), None);
         self.persist_registered(&folded);
-        Some((accum.flags, applied_args))
+        Some((accum.flags, applied_args, wire_args))
     }
 
     /// Apply a channel mode change relayed over S2S. Mode bursts (`*` source)
@@ -3817,7 +3842,7 @@ impl Server {
         flags: &str,
         args: &[String],
     ) {
-        let Some((applied_flags, applied_args)) =
+        let Some((applied_flags, applied_args, _wire)) =
             self.apply_mode_change(channel_name, source, peer_ts, flags, args)
         else {
             return;
@@ -5123,6 +5148,66 @@ mod tests {
         }]);
 
         assert!(!channel.data.lock().modes.moderated);
+    }
+
+    #[test]
+    fn plugin_message_to_a_remote_user_travels_by_nick() {
+        use crate::plugin::Action;
+        let server = test_server();
+        let (tx, mut rx) = mpsc::channel(8);
+        server.register_link(LinkHandle::new(
+            "2BB".to_owned(),
+            "irc.b".to_owned(),
+            "peer".to_owned(),
+            tx,
+        ));
+        assert!(
+            server
+                .accept_remote_user(remote("2BB", "2BBaaa", "bob"))
+                .is_none()
+        );
+        while rx.try_recv().is_ok() {} // drop the introduction burst
+
+        server.apply_plugin_actions(vec![Action::Message {
+            target: "bob".to_owned(),
+            text: "hello".to_owned(),
+        }]);
+
+        let frame = rx.try_recv().expect("the message is routed to the peer");
+        let frame = String::from_utf8_lossy(&frame).into_owned();
+        // The receiving server resolves the target as a nickname, so a UID here
+        // would be dropped on arrival.
+        assert!(frame.contains(" bob "), "target must be a nick: {frame}");
+        assert!(!frame.contains("2BBaaa"), "UID leaked to the wire: {frame}");
+        assert!(frame.contains("hello"));
+    }
+
+    #[test]
+    fn applied_mode_arguments_stay_aligned_with_applied_flags() {
+        let (server, channel) = server_with_remote_channel();
+        // Pre-existing ban: adding it again applies nothing.
+        channel.data.lock().bans.push(Ban {
+            mask: "*!*@dup.example".to_owned(),
+            set_by: "someone".to_owned(),
+            set_at: 0,
+        });
+
+        // `+bo <dup> <bob>`: the ban is a no-op, the op is not. Everything the
+        // caller propagates has to describe the op alone — otherwise the peer
+        // consumes the ban mask as the `+o` target.
+        let (flags, applied, wire) = server
+            .apply_mode_change(
+                "#general",
+                "*",
+                0,
+                "+bo",
+                &["*!*@dup.example".to_owned(), "2BBaaa".to_owned()],
+            )
+            .expect("the op applies");
+        assert_eq!(flags, "+o");
+        assert_eq!(applied, vec!["bob".to_owned()]);
+        assert_eq!(wire, vec!["2BBaaa".to_owned()]);
+        assert!(channel.data.lock().remote_members["2BBaaa"].prefix.op);
     }
 
     #[test]
