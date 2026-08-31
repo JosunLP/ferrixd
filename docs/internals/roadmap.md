@@ -2,8 +2,10 @@
 
 ferrixd reached **1.0.0** — the first stable release — **1.1.0** extended it
 (IRC over WebSockets, WEBIRC, bot-mode, live link management, TLS reload), and
-**1.2.0** grows the plugin system into a full extension surface (Plugin ABI v2;
-see the [changelog](https://github.com/josunlp/ferrixd/blob/main/CHANGELOG.md)).
+**1.2.0** grew the plugin system into a full extension surface (Plugin ABI v2).
+**1.3.0** finishes that arc: plugins can now *act* — kick, mode, topic, K-Line
+and message, each behind its own grant (Plugin ABI v3; see the
+[changelog](https://github.com/josunlp/ferrixd/blob/main/CHANGELOG.md)).
 This page records what the current release contains, what the stability promise
 covers, and what may come next.
 
@@ -67,6 +69,18 @@ holding the 1.x stability promise:
   memory cap, and the first capability-gated action (`ferrix.send_notice`,
   deny-by-default via `[plugins.grants]`) — the sandbox properties are
   unchanged: fail-open, fuel-bounded, no ambient authority.
+- **Plugin ABI v3.** Observation became agency. Five more capability-gated
+  actions (`send_message`, `kick`, `set_mode`, `set_topic`, `kline`), each
+  behind its own grant and applied *as the server* — so a plugin's kick or
+  mode change propagates across the link tree instead of stopping at the node
+  that ran it. Plus a periodic `ferrix_on_timer` hook, away/account
+  observation, richer queries (`server_info`, `channel_info`,
+  `user_channels`), CSPRNG bytes, levelled logging, and operator-supplied
+  per-plugin settings (`[plugins.config.<name>]`) so one `.wasm` file is
+  configured rather than recompiled per site. Old plugins load unchanged.
+- **Per-plugin metrics.** `/metrics` reports calls, blocks and traps per
+  plugin, so a plugin that starts failing open is alertable rather than
+  merely logged.
 - **Live link management.** Operators can bring S2S links up and down at
   runtime with `CONNECT <name>` and `SQUIT <server> [:reason]`, beyond the
   config-driven links started at boot.
@@ -86,10 +100,15 @@ Direction, not commitment:
 
 - **Draft-spec tracking.** The `draft/*` capabilities follow their specs;
   ratified names are adopted as they land.
-- **Even richer plugin capabilities.** The moderation events and the first
-  active capability (`send_notice`) are covered; further capability-gated
-  actions (kick, mode, kline as *actions*) are the natural next extension
-  of the same grants model.
+- **Plugin capabilities beyond the channel.** Kick, mode, topic and kline
+  as actions have landed; what is left of the same grants model is the
+  network layer — a plugin asking for a `GLINE`, or driving `CONNECT` /
+  `SQUIT`. Those touch the whole link tree rather than one channel, so they
+  want an operator story (audit trail, revocation) before an ABI.
+- **A plugin package format.** Plugins are bare `.wasm` files today; a
+  manifest (name, ABI level, requested capabilities) would let the host
+  refuse a plugin whose requests exceed its grants at *load* time instead of
+  refusing each call.
 
 If you want to influence any of this, open an issue —
 [GitHub](https://github.com/josunlp/ferrixd/issues).
