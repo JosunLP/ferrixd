@@ -69,7 +69,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 
 # --- WASM plugin host (pure-Rust interpreter; no cmake/JIT, keeps the build
 #     cmake-free and the dependency tree small — see crates/ferrixd/src/plugin.rs) ---
-wasmi = "1"
+wasmi = "2"
 wat = "1"
 
 # --- config ---
