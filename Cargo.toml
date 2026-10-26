@@ -53,7 +53,7 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"]
 smallvec = { version = "1", features = ["union", "const_generics"] }
 memchr = "2"
 dashmap = "6"
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # --- auth / crypto ---
 argon2 = "0.6"
@@ -69,7 +69,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 
 # --- WASM plugin host (pure-Rust interpreter; no cmake/JIT, keeps the build
 #     cmake-free and the dependency tree small — see crates/ferrixd/src/plugin.rs) ---
-wasmi = "1"
+wasmi = "2"
 wat = "1"
 
 # --- config ---
