@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-11-17
+
+Maintenance release: dependency, toolchain and container refresh. No
+configuration, protocol, CLI, S2S or plugin-ABI changes; a drop-in upgrade
+from 1.3.0.
+
+### Changed
+
+- **Dependencies refreshed.** `rusqlite` 0.43 (bundled SQLite 3.54.1, from
+  3.53.2) and `wasmi` 2.0 for the plugin host, plus the latest compatible
+  releases across the tree: `tokio` 1.54.1, `rustls` 0.23.46 /
+  `rustls-webpki` 0.103.17, `tokio-rustls` 0.26.6, `clap` 4.6.8, `toml`
+  1.2.1, `sha2` 0.11.1, `wat`/`wasm-encoder` 263, `thiserror` 2.0.21.
+  Existing databases and plugins keep working unchanged. The minimum
+  supported Rust version stays at 1.90.
+- **Container images** are now based on Alpine 3.24 (from 3.22). The
+  binary inside is the same static musl build as the release tarballs.
+- The documentation site builds on Node 24 LTS.
+
 ## [1.3.0] — 2026-08-31
 
 ### Added
@@ -234,6 +253,7 @@ daemon is the product, the crates are its implementation.
 - Bounded SendQ, token-bucket rate limits, per-IP connection throttling, ping
   timeouts, K/D/G-lines, and HMAC host cloaking.
 
+[1.3.1]: https://github.com/josunlp/ferrixd/releases/tag/v1.3.1
 [1.3.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.3.0
 [1.2.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.2.0
 [1.1.0]: https://github.com/josunlp/ferrixd/releases/tag/v1.1.0

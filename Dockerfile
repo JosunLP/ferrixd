@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Runtime stage — minimal Alpine, non-root. The binary is static, so Alpine
 # (vs. scratch) only buys busybox for debugging and container healthchecks.
 # ---------------------------------------------------------------------------
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN addgroup -g 10001 -S ferrixd \
     && adduser -u 10001 -S -G ferrixd -H -h /var/lib/ferrixd ferrixd \
