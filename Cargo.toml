@@ -65,7 +65,7 @@ hmac = "0.13"
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 
 # --- persistence ---
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # --- WASM plugin host (pure-Rust interpreter; no cmake/JIT, keeps the build
 #     cmake-free and the dependency tree small — see crates/ferrixd/src/plugin.rs) ---
