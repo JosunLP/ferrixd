@@ -10,7 +10,7 @@
 # contains `ferrixd-amd64` and `ferrixd-arm64` — NOT the repository root. The
 # from-source counterpart used for local `docker build` lives in ./Dockerfile.
 # ---------------------------------------------------------------------------
-FROM alpine:3.22
+FROM alpine:3.24
 
 ARG TARGETARCH
 
