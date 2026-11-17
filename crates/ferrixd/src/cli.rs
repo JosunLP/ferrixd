@@ -230,7 +230,6 @@ fn help_styles() -> Styles {
 
 /// CLI entrypoint. Parses arguments, dispatches to a subcommand, and turns any
 /// error into a tidy diagnostic and a non-zero exit code.
-#[must_use]
 pub fn main() -> ExitCode {
     let cli = Cli::parse();
     let color = resolve_color(cli.global.color);

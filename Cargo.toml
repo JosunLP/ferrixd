@@ -13,7 +13,6 @@ edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/josunlp/ferrixd"
-homepage = "https://josunlp.github.io/ferrixd/"
 documentation = "https://josunlp.github.io/ferrixd/"
 authors = ["ferrixd contributors"]
 keywords = ["irc", "ircd", "ircv3", "server", "chat"]
