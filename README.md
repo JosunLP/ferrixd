@@ -32,7 +32,7 @@ afternoon. What it never had was a server built like it matters — memory-safe,
 spec-complete, hostile-input-proof, and honest about persistence. **ferrixd**
 is that server: element 26, oxidised into software.
 
-**Version 1.3.0** builds on the stable 1.0 line: a security-hardened, IRCv3
+**Version 1.3.1** builds on the stable 1.0 line: a security-hardened, IRCv3
 server with persistent message history, a federated server-to-server mesh, a
 sandboxed WASM plugin host, and a demonstrated density of ~100k concurrent
 connections per node — reachable over WebSockets, with WEBIRC gateway
@@ -278,7 +278,7 @@ irm https://raw.githubusercontent.com/josunlp/ferrixd/main/scripts/install.ps1 |
 Defaults: binaries land in `/usr/local/bin` (as root) or `~/.local/bin`
 (as user) — `$PREFIX/bin` on Termux, `%LOCALAPPDATA%\Programs\ferrixd` on
 Windows (added to the user `PATH`). Pin a version with
-`sh -s -- install --version v1.3.0` (PowerShell: `... install v1.3.0`);
+`sh -s -- install --version v1.3.1` (PowerShell: `... install v1.3.1`);
 override the directory with `--dir`/`-Dir` or `$FERRIXD_INSTALL_DIR`.
 
 Cutting a release: bump `version` in `Cargo.toml`, then publish a GitHub Release
