@@ -177,9 +177,9 @@ checksum = "87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db"
 
 [[package]]
 name = "bytes"
-version = "1.12.1"
+version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
+checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "cc"
@@ -199,9 +199,9 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "clap"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac230478587d0269d8d6998b82ae69ea51509d55df66d9e92edd1f986904cd4a"
+checksum = "844c5c0b65be192cb68d570cca1b21a6444431d24e39c084dc0336177015337c"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -230,9 +230,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "895c9d8d2ac2dd8b8a29f3724a14e72aaaa6debcf8c38c82f97305c6a172767a"
+checksum = "b4c174f11f949b9ca8c60580925e282b9cbd5454750e506f08648b2038080cd7"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -373,7 +373,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1120,9 +1120,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.5"
+version = "1.16.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 
 [[package]]
 name = "socket2"
@@ -1475,9 +1475,9 @@ dependencies = [
 
 [[package]]
 name = "wasmi"
-version = "2.0.0"
+version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78693fcdd618e0fc34af59c6b8efa9ac5d58c68df940beff4bedddb6acfe7c27"
+checksum = "8762bb61dfbcfdbe0ab1a783a73d26d5149809cf7d882c9c9b76b7c0fb9417de"
 dependencies = [
  "spin",
  "wasmi_collections",
@@ -1489,27 +1489,27 @@ dependencies = [
 
 [[package]]
 name = "wasmi_collections"
-version = "2.0.0"
+version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a8be2aa467cf2d29e96ff759472c36eeb44a3c81c67fc9cb76c9a24c519c557"
+checksum = "e7e053dad75ea3b41b5a6973af3e923bd7c608e9d3b7415a7cf0018c280c16b3"
 dependencies = [
  "string-interner",
 ]
 
 [[package]]
 name = "wasmi_core"
-version = "2.0.0"
+version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69372d5fda3ea3d1e0aa6603c7888110e0187e88ea17cd8fc2e2df0a0e1f37fa"
+checksum = "1709ad297d9dc05a4b109148e1c0908691b1553b1473f6b08f4f5b969c3c81fe"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "wasmi_ir"
-version = "2.0.0"
+version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f17b774caa13c618c7244f1ee51fe23c5e7b8538a471fa46d9949779758aed6"
+checksum = "746ed3ae294cf571d06020c9b8f4a3cb2be1ef228f8556279cc354cf6cf01df4"
 dependencies = [
  "wasmi_core",
 ]
